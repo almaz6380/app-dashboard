@@ -29,3 +29,44 @@ Siehe `.env.example`. **`.env.local` niemals committen** (ist ge-ignored).
 - Zahlen aktualisieren sich beim Seitenaufruf, max. alle 6h neu geladen; Store-Daten selbst hängen ~1 Tag (Apple) bzw. ~2–3 Tage (Google) hinterher.
 - Google braucht (a) Bucket-Freigabe des Service-Accounts in der Play Console (kann bis 24h propagieren) und (b) einen existierenden Monatsbericht — sonst keine Zahlen.
 - Nicht verbundene/klemmende Quellen zeigen „einrichten" (kein „Fehler"); Apps ohne Konten zeigen bei Mitglieder „–".
+
+---
+
+## Handy-Betrieb: Builds, Deploys und fal.ai auf Zuruf
+
+Josef arbeitet meist vom Handy. Für **alle** Sitzungen dieses Repos gilt darum eine
+Dauer-Freigabe. Sie sagt nur, *dass* Claude das darf — sie ersetzt nie das „ja" zum
+einzelnen Lauf.
+
+**Grundsätzlich erlaubt:**
+- Deploys auslösen
+- fal.ai für Bildmaterial nutzen (Grafiken, Icons, Illustrationen)
+
+**Bedingung, ausnahmslos:** Jeder einzelne Lauf braucht vorher ein ausdrückliches
+„ja" von Josef im Chat. Davor in drei Zeilen zusammenfassen: *was* passiert, *welche
+Versionsnummer*, *wohin* es geht (Store / Produktion / nur Artefakt zum Ansehen) —
+bei fal.ai zusätzlich Modell, Anzahl Bilder und ungefähre Kosten. Geht etwas schief:
+melden und stehen bleiben, nicht auf eigene Faust nachbessern und noch einmal
+hochladen. Ergebnisse (Bilder, Build-Artefakte, Logs) mit `SendUserFile` direkt im
+Chat zeigen — auf dem Handy gibt es keinen Dateimanager.
+
+**Schlüssel gehören weder ins Repo noch in den Chat:**
+
+| Zweck | Ort |
+|---|---|
+| Signierung + Store-Upload | GitHub → Repo → Settings → Secrets and variables → Actions |
+| `FAL_KEY` | Umgebungsvariable der Claude-Umgebung (claude.ai/code → Environment) |
+| Vercel / Supabase | Vercel-Env bzw. lokale `.env` (gitignored) |
+
+Ein Schlüssel, der im Chat steht, steht dauerhaft im Sitzungsprotokoll → gilt als
+verbrannt und muss ersetzt werden. Fehlt einer: sagen **welcher** und **wo er
+hingehört**, statt zu raten oder einen Umweg zu bauen.
+
+**fal.ai läuft in der Sitzung** (Josef braucht dafür kein Terminal):
+`curl -s https://fal.run/<modell> -H "Authorization: Key $FAL_KEY" -H 'Content-Type: application/json' -d '{"prompt":"…"}'`
+→ Bild herunterladen, ins Repo legen, committen, im Chat zeigen. Ohne gesetzten
+`FAL_KEY` ist der Weg zu: dann sagen, dass die Variable in der Umgebung fehlt.
+
+**Auslösen in diesem Repo:** Keine App-Builds. Deploy per `vercel --prod` (kein
+Git-Trigger) und nur nach Freigabe. Die Store- und Supabase-Schlüssel liegen in der
+Vercel-Env bzw. lokal in `.env.local` — niemals ins Repo, niemals in den Chat.
