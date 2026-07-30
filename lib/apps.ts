@@ -30,8 +30,9 @@ export const APPS: AppDef[] = [
       keyVar: "WELLBOOKED_SUPABASE_SERVICE_KEY",
       table: "profiles",
     },
-    stores: ["ios"],
+    stores: ["ios", "android"],
     appleAppId: "6781266042",
+    androidPackage: "at.wellbooked.app",
   },
   {
     id: "mypeak",
