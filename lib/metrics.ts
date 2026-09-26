@@ -55,7 +55,15 @@ async function countSupabaseRows(app: AppDef): Promise<Metric> {
   }
 }
 
-export async function getAllMetrics(): Promise<AppMetrics[]> {
+export type DashboardData = {
+  apps: AppMetrics[];
+  // Aeltester Abfragezeitpunkt der verbundenen Store-Quellen (ms), null = keine.
+  fetchedAt: number | null;
+  // true, wenn eine Quelle nur teilweise Daten lieferte (Zahlen evtl. zu niedrig).
+  partial: boolean;
+};
+
+export async function getAllMetrics(): Promise<DashboardData> {
   // Beide Quellen einmal fuer alle Apps holen.
   const packages = APPS.map((a) => a.androidPackage).filter(
     (p): p is string => Boolean(p),
@@ -88,7 +96,13 @@ export async function getAllMetrics(): Promise<AppMetrics[]> {
     return gotData ? { value: sum, status: "ok" } : NOT_CONFIGURED;
   }
 
-  return Promise.all(
+  const okSources = [apple, google].filter((r) => r.status === "ok");
+  const fetchedAt = okSources.length
+    ? Math.min(...okSources.map((r) => r.fetchedAt))
+    : null;
+  const partial = okSources.some((r) => r.partial);
+
+  const apps = await Promise.all(
     APPS.map(async (app) => {
       const [members, downloads] = await Promise.all([
         app.hasMembers
@@ -103,4 +117,5 @@ export async function getAllMetrics(): Promise<AppMetrics[]> {
       return { id: app.id, name: app.name, members, downloads };
     }),
   );
+  return { apps, fetchedAt, partial };
 }

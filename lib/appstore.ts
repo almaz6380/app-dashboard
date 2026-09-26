@@ -121,7 +121,12 @@ function pad(n: number): string {
 }
 
 type AppleResult =
-  | { status: "ok"; byAppleId: Map<string, number> }
+  | {
+      status: "ok";
+      byAppleId: Map<string, number>;
+      fetchedAt: number; // Zeitpunkt der Abfrage (ms)
+      partial: boolean; // einzelne Berichte fehlten -> Summe evtl. zu niedrig
+    }
   | { status: "not-configured" }
   | { status: "error"; detail: string };
 
@@ -162,7 +167,12 @@ async function computeAppleDownloads(): Promise<AppleResult> {
 
     if (totals.size === 0 && firstError)
       return { status: "error", detail: firstError };
-    return { status: "ok", byAppleId: totals };
+    return {
+      status: "ok",
+      byAppleId: totals,
+      fetchedAt: Date.now(),
+      partial: firstError !== null,
+    };
   } catch (e) {
     return {
       status: "error",
@@ -175,7 +185,9 @@ export async function getAppleDownloads(): Promise<AppleResult> {
   const nowMs = Date.now();
   if (cache && nowMs - cache.ts < CACHE_TTL_MS) return cache.result;
   const result = await computeAppleDownloads();
-  // Nur erfolgreiche/leere Ergebnisse cachen, Fehler nicht festhalten.
-  if (result.status !== "error") cache = { ts: nowMs, result };
+  // Nur vollstaendige Ergebnisse cachen: Fehler und Teilergebnisse (einzelne
+  // Berichte fehlten) nicht 6h festhalten, sondern beim naechsten Aufruf neu holen.
+  if (result.status === "not-configured" || (result.status === "ok" && !result.partial))
+    cache = { ts: nowMs, result };
   return result;
 }

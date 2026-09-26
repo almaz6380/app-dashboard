@@ -17,7 +17,16 @@ function cellClass(m: Metric): string {
 }
 
 export default async function DashboardPage() {
-  const metrics = await getAllMetrics();
+  const { apps: metrics, fetchedAt, partial } = await getAllMetrics();
+  const stand = fetchedAt
+    ? new Date(fetchedAt).toLocaleString("de-AT", {
+        timeZone: "Europe/Vienna",
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
 
   const totalMembers = metrics.reduce(
     (s, m) => s + (m.members.status === "ok" ? m.members.value ?? 0 : 0),
@@ -37,6 +46,11 @@ export default async function DashboardPage() {
             <p className="text-sm text-neutral-400">
               Downloads &amp; Mitglieder – nur Zahlen.
             </p>
+            {stand && (
+              <p className="mt-0.5 text-xs text-neutral-500">
+                Stand: {stand} Uhr
+              </p>
+            )}
           </div>
           <form action="/api/logout" method="post">
             <button className="rounded-lg border border-neutral-800 px-3 py-1.5 text-sm text-neutral-400 hover:text-neutral-100">
@@ -93,9 +107,17 @@ export default async function DashboardPage() {
           </table>
         </div>
 
+        {partial && (
+          <p className="mt-4 text-xs text-amber-400">
+            Einige Store-Berichte konnten gerade nicht geladen werden – Zahlen
+            evtl. zu niedrig. Neu laden versucht es erneut.
+          </p>
+        )}
+
         <p className="mt-4 text-xs text-neutral-600">
-          „–" = kein Nutzerkonto-System · „einrichten" = Quelle noch nicht
-          verbunden · Seite neu laden aktualisiert die Zahlen.
+          „–“ = kein Nutzerkonto-System · „einrichten“ = Quelle noch nicht
+          verbunden · Store-Zahlen werden max. alle 6 h neu geholt und hängen
+          1–3 Tage hinterher.
         </p>
       </div>
     </main>

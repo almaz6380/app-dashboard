@@ -103,14 +103,25 @@ async function totalInstalls(
   const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
   const iTotal = headers.indexOf("Total User Installs");
   if (iTotal < 0) return null;
-  // letzte Datenzeile = aktuellster kumulierter Stand
-  const last = lines[lines.length - 1].split(",");
-  const val = Number((last[iTotal] ?? "").trim());
-  return Number.isFinite(val) ? val : null;
+  // Von hinten die letzte Zeile mit Wert nehmen = aktuellster kumulierter
+  // Stand. Leere Zellen (Tag noch nicht befuellt) ueberspringen, sonst wuerde
+  // Number("") faelschlich 0 ergeben.
+  for (let r = lines.length - 1; r >= 1; r--) {
+    const raw = (lines[r].split(",")[iTotal] ?? "").trim().replace(/^"|"$/g, "");
+    if (raw === "") continue;
+    const val = Number(raw);
+    if (Number.isFinite(val)) return val;
+  }
+  return null;
 }
 
 type GoogleResult =
-  | { status: "ok"; byPackage: Map<string, number> }
+  | {
+      status: "ok";
+      byPackage: Map<string, number>;
+      fetchedAt: number; // Zeitpunkt der Abfrage (ms)
+      partial: boolean; // einzelne Apps schlugen fehl -> Zahlen evtl. unvollstaendig
+    }
   | { status: "not-configured" }
   | { status: "error"; detail: string };
 
@@ -137,7 +148,12 @@ async function compute(packages: string[]): Promise<GoogleResult> {
     );
     if (byPackage.size === 0 && firstError)
       return { status: "error", detail: firstError };
-    return { status: "ok", byPackage };
+    return {
+      status: "ok",
+      byPackage,
+      fetchedAt: Date.now(),
+      partial: firstError !== null,
+    };
   } catch (e) {
     return { status: "error", detail: e instanceof Error ? e.message : "Fehler" };
   }
@@ -147,6 +163,8 @@ export async function getGoogleInstalls(packages: string[]): Promise<GoogleResul
   const nowMs = Date.now();
   if (cache && nowMs - cache.ts < CACHE_TTL_MS) return cache.result;
   const result = await compute(packages);
-  if (result.status !== "error") cache = { ts: nowMs, result };
+  // Teilergebnisse nicht cachen (siehe appstore.ts).
+  if (result.status === "not-configured" || (result.status === "ok" && !result.partial))
+    cache = { ts: nowMs, result };
   return result;
 }
