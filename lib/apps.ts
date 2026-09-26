@@ -36,7 +36,7 @@ export const APPS: AppDef[] = [
   },
   {
     id: "mypeak",
-    name: "MyPeak",
+    name: "FullRep", // frueher MyPeak (Env-Namen bleiben MYPEAK_*)
     hasMembers: true,
     membersEnv: {
       urlVar: "MYPEAK_SUPABASE_URL",
@@ -44,6 +44,7 @@ export const APPS: AppDef[] = [
       table: "profiles",
     },
     stores: ["ios", "android"],
+    appleAppId: "6788461300",
     androidPackage: "at.gallab.mypeak",
   },
   {
@@ -56,9 +57,18 @@ export const APPS: AppDef[] = [
   },
   {
     id: "mahjong",
-    name: "Mahjong",
+    name: "Mahjong Royale",
     hasMembers: false, // rein offline, keine Konten
     stores: ["ios", "android"],
+    appleAppId: "6787721454",
     androidPackage: "com.mahjongroyale.app",
+  },
+  {
+    id: "anigosha",
+    name: "Anigosha",
+    hasMembers: false, // Mitglieder-Quelle noch offen
+    stores: ["ios", "android"],
+    appleAppId: "6797757350",
+    androidPackage: "at.gallab.animequiz",
   },
 ];
