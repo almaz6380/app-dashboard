@@ -35,6 +35,18 @@ export function readConfig(): AppleConfig | null {
   };
 }
 
+// Optionaler zweiter Schluessel nur fuer das einmalige Anfordern der
+// Analytics-Berichte: Apple verlangt dafuer die Admin-Rolle, zum Abholen
+// genuegt danach "Sales and Reports". Fehlt er, wird der normale Schluessel
+// genommen - der scheitert dann mit HTTP 403.
+export function readAdminConfig(): AppleConfig | null {
+  const basis = readConfig();
+  const keyId = process.env.APPSTORE_ADMIN_KEY_ID;
+  const rawKey = process.env.APPSTORE_ADMIN_PRIVATE_KEY;
+  if (!basis || !keyId || !rawKey) return null;
+  return { ...basis, keyId, privateKey: rawKey.replace(/\\n/g, "\n") };
+}
+
 export async function makeJwt(cfg: AppleConfig): Promise<string> {
   const key = await importPKCS8(cfg.privateKey, "ES256");
   return new SignJWT({})

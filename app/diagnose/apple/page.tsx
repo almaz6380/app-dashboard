@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { diagnoseApple } from "@/lib/appleanalytics";
+import { readAdminConfig } from "@/lib/appstore";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,7 @@ export const dynamic = "force-dynamic";
 // abbricht. Liegt hinter dem Passwort (proxy.ts).
 export default async function AppleDiagnosePage() {
   const d = await diagnoseApple();
+  const adminSchluessel = readAdminConfig() !== null;
 
   return (
     <main className="min-h-dvh bg-neutral-950 p-4 text-neutral-100 sm:p-8">
@@ -45,6 +47,19 @@ export default async function AppleDiagnosePage() {
                 Schreibt in dein App-Store-Connect-Konto: je App eine laufende
                 und eine einmalige Anforderung. Braucht einen Schlüssel mit
                 Admin-Rolle. Danach dauert es 24–48 h bis zum ersten Bericht.
+              </p>
+              <p className="mt-1 text-xs">
+                {adminSchluessel ? (
+                  <span className="text-emerald-400">
+                    Admin-Schlüssel ist hinterlegt (APPSTORE_ADMIN_*).
+                  </span>
+                ) : (
+                  <span className="text-amber-400">
+                    Kein Admin-Schlüssel hinterlegt – Apple wird das mit HTTP
+                    403 ablehnen. Nötig: APPSTORE_ADMIN_KEY_ID und
+                    APPSTORE_ADMIN_PRIVATE_KEY in der Vercel-Env.
+                  </span>
+                )}
               </p>
               <button className="mt-3 rounded-lg border border-amber-700 px-3 py-1.5 text-sm text-amber-100 hover:bg-amber-900/40">
                 Jetzt anfordern

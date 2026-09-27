@@ -2,14 +2,17 @@ import { NextResponse } from "next/server";
 
 import { APPS } from "@/lib/apps";
 import { fordereAn, leseAnfragen } from "@/lib/appleanalytics";
-import { makeJwt, readConfig } from "@/lib/appstore";
+import { makeJwt, readAdminConfig, readConfig } from "@/lib/appstore";
 
 // Einmalige Anforderung der Analytics-Berichte je App. SCHREIBZUGRIFF auf
 // App Store Connect, darum nur per POST und nur hinter dem Passwort
 // (proxy.ts schuetzt alles ausser /login). Vorhandene Anforderungen werden
 // nicht doppelt gestellt.
 export async function POST() {
-  const cfg = readConfig();
+  // Bevorzugt den Admin-Schluessel; ohne ihn scheitert Apple mit HTTP 403.
+  const admin = readAdminConfig();
+  const cfg = admin ?? readConfig();
+  const schluessel = admin ? "APPSTORE_ADMIN_*" : "APPSTORE_* (kein Admin-Schluessel gesetzt)";
   if (!cfg)
     return NextResponse.json(
       { fehler: "APPSTORE_* Umgebungsvariablen fehlen" },
@@ -27,8 +30,10 @@ export async function POST() {
   }
 
   const ergebnisse: { app: string; ergebnis: string }[] = [];
+  let abbruch: string | null = null;
   for (const app of APPS) {
     if (!app.appleAppId) continue;
+    if (abbruch) break;
     const vorhanden = await leseAnfragen(jwt, app.appleAppId);
     if ("fehler" in vorhanden) {
       ergebnisse.push({ app: app.name, ergebnis: `Lesen: ${vorhanden.fehler}` });
@@ -46,8 +51,18 @@ export async function POST() {
         app: app.name,
         ergebnis: "fehler" in r ? `${typ}: ${r.fehler}` : `${typ}: angefordert`,
       });
+      // Bei fehlender Berechtigung scheitert jede weitere Anfrage genauso -
+      // dann lieber einmal klar abbrechen als zehnmal dasselbe versuchen.
+      if ("fehler" in r && r.fehler.includes("403")) {
+        abbruch =
+          "Der Schluessel darf keine Berichte anfordern (Apple: HTTP 403). " +
+          "Dafuer braucht es einen App-Store-Connect-Schluessel mit Admin-Rolle, " +
+          "hinterlegt als APPSTORE_ADMIN_KEY_ID und APPSTORE_ADMIN_PRIVATE_KEY " +
+          "in der Vercel-Env. Zum Abholen der Berichte genuegt danach der bisherige Schluessel.";
+        break;
+      }
     }
   }
 
-  return NextResponse.json({ ergebnisse });
+  return NextResponse.json({ schluessel, abbruch, ergebnisse });
 }

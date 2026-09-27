@@ -12,6 +12,7 @@ Next.js 16 (App Router, Turbopack), React 19, Tailwind 4, Node ≥ 24. Deploy au
 ## Struktur
 - `lib/apps.ts` — zentrale App-Liste (Name, `appleAppId`, `androidPackage`, `membersEnv`). Neue App = hier eintragen.
 - `lib/metrics.ts` — führt die Quellen zusammen; `getAllMetrics()` liefert pro App `downloads` + `members`. Downloads = Apple (iOS) + Google (Android), summiert.
+- `lib/appleanalytics.ts` — Apple Analytics Reports API (Anforderung → Bericht → Instanz → Segment). Liefert perspektivisch die *aktuellen* iOS-Installationen, die die Sales-Reports nicht kennen. Diagnose unter `/diagnose/apple`.
 - `lib/appstore.ts` — Apple App Store Connect: Sales-Summary-Reports (JWT ES256 via `jose`), summiert Erst-Download-Units (Product Type „1"/„F1"; Updates/IAP ausgeschlossen) pro Apple-ID. 6h-Cache.
 - `lib/googleplay.ts` — Google Play: liest `Total User Installs` aus `stats/installs/installs_<paket>_<JJJJMM>_overview.csv` (UTF-16) im Report-Bucket (Service-Account-JWT RS256 → OAuth → Storage-JSON-API). 6h-Cache.
 - `lib/auth.ts` + `proxy.ts` — Passwort-Login. **Next 16: „middleware" heißt jetzt `proxy.ts` (Funktion `proxy`).**
@@ -20,6 +21,7 @@ Next.js 16 (App Router, Turbopack), React 19, Tailwind 4, Node ≥ 24. Deploy au
 ## Env-Variablen (in `.env.local` lokal, in Vercel prod)
 - `DASHBOARD_PASSWORD`, `DASHBOARD_SECRET` (HMAC-Cookie-Schlüssel)
 - Apple: `APPSTORE_ISSUER_ID`, `APPSTORE_KEY_ID`, `APPSTORE_PRIVATE_KEY` (.p8-Inhalt), `APPSTORE_VENDOR_NUMBER`, `APPSTORE_START_YEAR`
+- Apple Analytics (optional): `APPSTORE_ADMIN_KEY_ID`, `APPSTORE_ADMIN_PRIVATE_KEY` — **nur** zum einmaligen Anfordern der Analytics-Berichte über `/diagnose/apple`. Apple verlangt dafür die Admin-Rolle; zum Abholen genügt danach der normale Schlüssel. Issuer-ID wird geteilt.
 - Google: `GOOGLE_SERVICE_ACCOUNT_JSON` (kompletter JSON in einer Zeile), `GOOGLE_PLAY_BUCKET` (`pubsite_prod_…`, hier ohne `rev_`)
 - Mitglieder (optional, noch nicht befüllt): `WELLBOOKED_SUPABASE_URL`/`_SERVICE_KEY`, `MYPEAK_SUPABASE_URL`/`_SERVICE_KEY` → `count(*)` auf `profiles`
 
