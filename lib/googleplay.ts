@@ -3,10 +3,10 @@ import { importPKCS8, SignJWT } from "jose";
 // ---- Google Play: Installationszahlen aus dem Report-Bucket ----
 // Google legt Statistik-CSVs in gs://pubsite_prod_rev_<id> ab, u.a.
 // stats/installs/installs_<paket>_<JJJJMM>_overview.csv (UTF-16).
-// Jede Datei enthaelt eine Zeile pro Tag. Wir summieren "Daily User Installs"
-// ueber alle Tage aller Monatsberichte - das Gegenstueck zu Apples
-// Erst-Downloads. Es kommen nur aggregierte Zahlen zurueck, keine
-// personenbezogenen Daten.
+// Jede Datei enthaelt eine Zeile pro Tag. Wir lesen ALLE Pakete, die im
+// Bucket liegen - so erscheint jede neue App automatisch im Dashboard, ohne
+// dass jemand lib/apps.ts pflegt. Es kommen nur aggregierte Zahlen zurueck,
+// keine personenbezogenen Daten.
 //
 // NICHT die Spalte "Total User Installs" nehmen: sie steht zwar in der
 // Kopfzeile, ist in diesen Berichten aber durchgehend 0 - auch an Tagen mit
@@ -17,8 +17,14 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SCOPE = "https://www.googleapis.com/auth/devstorage.read_only";
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
-// Spalte, die wir als "Download" zaehlen: neue Nutzer pro Tag.
-export const INSTALL_COLUMN = "Daily User Installs";
+// Die drei Spalten, aus denen die drei Zahlen im Dashboard entstehen.
+export const SPALTE_INSTALLS = "Daily User Installs"; // Summe = Nutzer seit jeher
+export const SPALTE_DEINSTALLS = "Daily User Uninstalls"; // Summe = Deinstallationen
+export const SPALTE_AKTIV = "Active Device Installs"; // letzter Wert = aktuell
+
+const PREFIX = "stats/installs/installs_";
+// stats/installs/installs_<paket>_<JJJJMM>_overview.csv
+const DATEINAME = /^stats\/installs\/installs_(.+)_(\d{6})_overview\.csv$/;
 
 type ServiceAccount = { client_email: string; private_key: string };
 
@@ -67,26 +73,40 @@ async function getAccessToken(sa: ServiceAccount): Promise<string> {
   return json.access_token;
 }
 
-// Alle Overview-Dateien eines Pakets, chronologisch (Name enthaelt JJJJMM).
-async function allOverviewNames(
+// Alle Overview-Dateien im Bucket, gruppiert nach Paket und chronologisch
+// sortiert (der Dateiname enthaelt JJJJMM, alphabetisch = chronologisch).
+async function alleOverviews(
   bucket: string,
-  pkg: string,
   token: string,
-): Promise<string[]> {
-  const prefix = `stats/installs/installs_${pkg}_`;
-  const url =
-    `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o` +
-    `?prefix=${encodeURIComponent(prefix)}&fields=items(name)`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`List ${pkg}: HTTP ${res.status}`);
-  const json = (await res.json()) as { items?: { name: string }[] };
-  return (json.items ?? [])
-    .map((i) => i.name)
-    .filter((n) => n.endsWith("_overview.csv"))
-    .sort();
+): Promise<Map<string, string[]>> {
+  const nachPaket = new Map<string, string[]>();
+  let pageToken: string | undefined;
+  do {
+    const url =
+      `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o` +
+      `?prefix=${encodeURIComponent(PREFIX)}&fields=items(name),nextPageToken` +
+      (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`List: HTTP ${res.status}`);
+    const json = (await res.json()) as {
+      items?: { name: string }[];
+      nextPageToken?: string;
+    };
+    for (const it of json.items ?? []) {
+      const m = DATEINAME.exec(it.name);
+      if (!m) continue;
+      const paket = m[1];
+      const liste = nachPaket.get(paket);
+      if (liste) liste.push(it.name);
+      else nachPaket.set(paket, [it.name]);
+    }
+    pageToken = json.nextPageToken;
+  } while (pageToken);
+  for (const liste of nachPaket.values()) liste.sort();
+  return nachPaket;
 }
 
 // Rohen CSV-Text einer Datei holen (UTF-16LE mit BOM -> Text).
@@ -156,10 +176,35 @@ export function letzterWert(text: string, column: string): number | null {
   return null;
 }
 
+// Die drei Zahlen einer App.
+export type AndroidZahlen = {
+  installs: number | null; // Nutzer, die je installiert haben
+  aktuell: number | null; // Geraete mit aktueller Installation
+  deinstalliert: number | null; // Deinstallationen
+};
+
+// Alle Monatsdateien eines Pakets zu den drei Zahlen zusammenfuehren.
+// Exportiert, damit die Zusammenfuehrung ohne Netzzugriff testbar ist.
+export function fasseZusammen(texte: string[]): AndroidZahlen {
+  let installs: number | null = null;
+  let deinstalliert: number | null = null;
+  let aktuell: number | null = null;
+  for (const text of texte) {
+    const i = sumSpalte(text, SPALTE_INSTALLS);
+    if (i !== null) installs = (installs ?? 0) + i;
+    const d = sumSpalte(text, SPALTE_DEINSTALLS);
+    if (d !== null) deinstalliert = (deinstalliert ?? 0) + d;
+    // Chronologisch sortiert -> der letzte gefundene Wert ist der juengste.
+    const a = letzterWert(text, SPALTE_AKTIV);
+    if (a !== null) aktuell = a;
+  }
+  return { installs, aktuell, deinstalliert };
+}
+
 type GoogleResult =
   | {
       status: "ok";
-      byPackage: Map<string, number>;
+      byPackage: Map<string, AndroidZahlen>;
       fetchedAt: number; // Zeitpunkt der Abfrage (ms)
       partial: boolean; // einzelne Apps/Monate fehlten -> Zahlen evtl. zu niedrig
     }
@@ -168,50 +213,40 @@ type GoogleResult =
 
 let cache: { ts: number; result: GoogleResult } | null = null;
 
-async function compute(packages: string[]): Promise<GoogleResult> {
+async function compute(): Promise<GoogleResult> {
   const cfg = readConfig();
   if (!cfg) return { status: "not-configured" };
   try {
     const token = await getAccessToken(cfg.sa);
-    const byPackage = new Map<string, number>();
-    // Apps ohne Zahl mit Begruendung sammeln. Frueher gingen diese Faelle
-    // still verloren und wurden im Dashboard als "0" angezeigt.
+    const nachPaket = await alleOverviews(cfg.bucket, token);
+    const byPackage = new Map<string, AndroidZahlen>();
+    // Apps ohne (vollstaendige) Zahl mit Begruendung sammeln. Frueher gingen
+    // diese Faelle still verloren und wurden im Dashboard als "0" angezeigt.
     const ohneZahl: string[] = [];
     let firstError: string | null = null;
+
     await Promise.all(
-      packages.map(async (pkg) => {
+      [...nachPaket].map(async ([paket, dateien]) => {
         try {
-          const dateien = await allOverviewNames(cfg.bucket, pkg, token);
-          if (!dateien.length) {
-            ohneZahl.push(`${pkg}: kein Bericht im Bucket`);
-            return;
-          }
-          // Alle Monate laden und die Tageswerte aufsummieren.
-          const werte = await Promise.all(
-            dateien.map(async (datei) =>
-              sumSpalte(await rawCsv(cfg.bucket, datei, token), INSTALL_COLUMN),
-            ),
+          const texte = await Promise.all(
+            dateien.map((d) => rawCsv(cfg.bucket, d, token)),
           );
-          const brauchbar = werte.filter((w): w is number => w !== null);
-          if (!brauchbar.length) {
+          const zahlen = fasseZusammen(texte);
+          if (zahlen.installs === null) {
             ohneZahl.push(
-              `${pkg}: ${dateien.length} Bericht(e), keiner mit Spalte "${INSTALL_COLUMN}"`,
+              `${paket}: ${dateien.length} Bericht(e), keiner mit Spalte "${SPALTE_INSTALLS}"`,
             );
             return;
           }
-          if (brauchbar.length < werte.length) {
-            ohneZahl.push(
-              `${pkg}: ${werte.length - brauchbar.length} von ${werte.length} Monaten ohne Spalte "${INSTALL_COLUMN}"`,
-            );
-          }
-          byPackage.set(pkg, brauchbar.reduce((s, n) => s + n, 0));
+          byPackage.set(paket, zahlen);
         } catch (e) {
           const msg = e instanceof Error ? e.message : "Fehler";
-          ohneZahl.push(`${pkg}: ${msg}`);
+          ohneZahl.push(`${paket}: ${msg}`);
           if (!firstError) firstError = msg;
         }
       }),
     );
+
     // Warum eine App keine (vollstaendige) Zahl hat, ist im Dashboard nicht
     // sichtbar -> ins Server-Log, abrufbar mit `vercel logs <deployment>`.
     if (ohneZahl.length)
@@ -231,10 +266,10 @@ async function compute(packages: string[]): Promise<GoogleResult> {
   }
 }
 
-export async function getGoogleInstalls(packages: string[]): Promise<GoogleResult> {
+export async function getGoogleInstalls(): Promise<GoogleResult> {
   const nowMs = Date.now();
   if (cache && nowMs - cache.ts < CACHE_TTL_MS) return cache.result;
-  const result = await compute(packages);
+  const result = await compute();
   // Teilergebnisse nicht cachen (siehe appstore.ts).
   if (result.status === "not-configured" || (result.status === "ok" && !result.partial))
     cache = { ts: nowMs, result };
@@ -242,16 +277,16 @@ export async function getGoogleInstalls(packages: string[]): Promise<GoogleResul
 }
 
 // ---- Diagnose ----
-// Zeigt, was wirklich im Bucket liegt: welche Monatsdateien es gibt, wie die
-// Spalten heissen und welche Summen jeder Monat ergibt. Nur aggregierte
-// Zahlen, keine personenbezogenen Daten. Die Seite dazu liegt hinter dem
-// Passwort (proxy.ts schuetzt alles ausser /login).
+// Zeigt, was wirklich im Bucket liegt: welche Pakete und Monatsdateien es
+// gibt, wie die Spalten heissen und welche Summen jeder Monat ergibt. Nur
+// aggregierte Zahlen. Die Seite dazu liegt hinter dem Passwort (proxy.ts
+// schuetzt alles ausser /login).
 export type MonatsDiagnose = {
   datei: string;
   tage: number; // Tageszeilen in der Datei
-  nutzerInstalls: number | null; // Summe "Daily User Installs" -> das zaehlt
-  geraeteInstalls: number | null; // Summe "Daily Device Installs"
-  aktivGeraete: number | null; // letzter Wert "Active Device Installs"
+  installs: number | null;
+  deinstalliert: number | null;
+  aktuell: number | null;
   letzteZeile: string | null;
 };
 
@@ -259,67 +294,67 @@ export type PaketDiagnose = {
   paket: string;
   dateien: number;
   spalten: string[];
-  summe: number | null; // ueber alle geladenen Monate, wie im Dashboard
+  gesamt: AndroidZahlen;
   monate: MonatsDiagnose[];
   fehler?: string;
 };
 
-export async function diagnose(
-  packages: string[],
-): Promise<{ bucket: string; pakete: PaketDiagnose[] } | { fehler: string }> {
+export async function diagnose(): Promise<
+  { bucket: string; pakete: PaketDiagnose[] } | { fehler: string }
+> {
   const cfg = readConfig();
   if (!cfg) return { fehler: "GOOGLE_SERVICE_ACCOUNT_JSON/GOOGLE_PLAY_BUCKET fehlen" };
   let token: string;
+  let nachPaket: Map<string, string[]>;
   try {
     token = await getAccessToken(cfg.sa);
+    nachPaket = await alleOverviews(cfg.bucket, token);
   } catch (e) {
-    return { fehler: e instanceof Error ? e.message : "Token-Fehler" };
+    return { fehler: e instanceof Error ? e.message : "Zugriffsfehler" };
   }
 
   const pakete = await Promise.all(
-    packages.map(async (paket): Promise<PaketDiagnose> => {
+    [...nachPaket].map(async ([paket, alle]): Promise<PaketDiagnose> => {
       try {
-        const alle = await allOverviewNames(cfg.bucket, paket, token);
         // Nur die letzten 6 Monate laden, das reicht zur Beurteilung.
         const letzte = alle.slice(-6);
-        let spalten: string[] = [];
-        const monate = await Promise.all(
-          letzte.map(async (datei): Promise<MonatsDiagnose> => {
-            const text = await rawCsv(cfg.bucket, datei, token);
-            const zeilen = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-            if (zeilen.length && !spalten.length)
-              spalten = zeilen[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
-            return {
-              datei: datei.replace("stats/installs/", ""),
-              tage: Math.max(zeilen.length - 1, 0),
-              nutzerInstalls: sumSpalte(text, INSTALL_COLUMN),
-              geraeteInstalls: sumSpalte(text, "Daily Device Installs"),
-              aktivGeraete: letzterWert(text, "Active Device Installs"),
-              letzteZeile: zeilen.length > 1 ? zeilen[zeilen.length - 1] : null,
-            };
-          }),
+        const texte = await Promise.all(
+          letzte.map((d) => rawCsv(cfg.bucket, d, token)),
         );
-        const brauchbar = monate
-          .map((m) => m.nutzerInstalls)
-          .filter((w): w is number => w !== null);
+        let spalten: string[] = [];
+        const monate = letzte.map((datei, i): MonatsDiagnose => {
+          const text = texte[i];
+          const zeilen = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+          if (zeilen.length && !spalten.length)
+            spalten = zeilen[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
+          return {
+            datei: datei.replace("stats/installs/", ""),
+            tage: Math.max(zeilen.length - 1, 0),
+            installs: sumSpalte(text, SPALTE_INSTALLS),
+            deinstalliert: sumSpalte(text, SPALTE_DEINSTALLS),
+            aktuell: letzterWert(text, SPALTE_AKTIV),
+            letzteZeile: zeilen.length > 1 ? zeilen[zeilen.length - 1] : null,
+          };
+        });
         return {
           paket,
           dateien: alle.length,
           spalten,
-          summe: brauchbar.length ? brauchbar.reduce((s, n) => s + n, 0) : null,
+          gesamt: fasseZusammen(texte),
           monate,
         };
       } catch (e) {
         return {
           paket,
-          dateien: 0,
+          dateien: alle.length,
           spalten: [],
-          summe: null,
+          gesamt: { installs: null, aktuell: null, deinstalliert: null },
           monate: [],
           fehler: e instanceof Error ? e.message : "Fehler",
         };
       }
     }),
   );
+  pakete.sort((a, b) => a.paket.localeCompare(b.paket));
   return { bucket: cfg.bucket, pakete };
 }

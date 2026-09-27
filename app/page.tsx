@@ -18,12 +18,15 @@ function cellClass(m: Metric): string {
   return "text-neutral-500 text-sm";
 }
 
-// Reihenfolge der drei Werte pro App - einmal definiert, von Karte und
-// Tabelle gemeinsam genutzt.
+// Reihenfolge der Werte pro App - einmal definiert, von Karte und Tabelle
+// gemeinsam genutzt. "Android" = Nutzer, die je installiert haben; "aktuell"
+// = Geraete mit aktueller Installation; "weg" = Deinstallationen.
 function cellsOf(m: AppMetrics): [string, Metric][] {
   return [
     ["iOS", m.ios],
     ["Android", m.android],
+    ["aktuell", m.androidAktuell],
+    ["weg", m.androidWeg],
     ["Mitglieder", m.members],
   ];
 }
@@ -51,15 +54,17 @@ export default async function DashboardPage() {
   const totalIos = sum((m) => m.ios);
   const totalAndroid = sum((m) => m.android);
   const totalDownloads = sum((m) => m.downloads);
+  const totalAktuell = sum((m) => m.androidAktuell);
 
   // Liefert eine Plattform gar keine Daten, waere eine 0 in der Aufteilung
   // gelogen - dann "-" zeigen.
   const hasIos = metrics.some((m) => m.ios.status === "ok");
   const hasAndroid = metrics.some((m) => m.android.status === "ok");
+  const hasAktuell = metrics.some((m) => m.androidAktuell.status === "ok");
 
   return (
     <main className="min-h-dvh bg-neutral-950 p-4 text-neutral-100 sm:p-8">
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-4xl">
         <header className="mb-6 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold">App-Dashboard</h1>
@@ -79,7 +84,7 @@ export default async function DashboardPage() {
           </form>
         </header>
 
-        <div className="mb-6 grid grid-cols-2 gap-3">
+        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
             <div className="text-xs uppercase tracking-wide text-neutral-500">
               Mitglieder gesamt
@@ -104,9 +109,20 @@ export default async function DashboardPage() {
               </div>
             )}
           </div>
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
+            <div className="text-xs uppercase tracking-wide text-neutral-500">
+              Aktuell installiert
+            </div>
+            <div className="mt-1 text-2xl font-bold tabular-nums">
+              {hasAktuell ? totalAktuell.toLocaleString("de-AT") : "—"}
+            </div>
+            <div className="mt-1 text-xs text-neutral-500">
+              nur Android – Apple liefert das nicht
+            </div>
+          </div>
         </div>
 
-        {/* Handy: je App eine Karte. Vier Tabellenspalten werden auf 390px
+        {/* Handy: je App eine Karte. Fuenf Tabellenspalten werden auf 390px
             zu eng, sobald eine Zelle "einrichten" statt einer Zahl zeigt. */}
         <ul className="space-y-3 sm:hidden">
           {metrics.map((m) => (
@@ -115,7 +131,14 @@ export default async function DashboardPage() {
               className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4"
             >
               <div className="flex items-baseline justify-between gap-3">
-                <span className="font-medium">{m.name}</span>
+                <span className="font-medium break-all">
+                  {m.name}
+                  {m.gefunden && (
+                    <span className="ml-1 text-[10px] uppercase tracking-wide text-amber-500">
+                      neu
+                    </span>
+                  )}
+                </span>
                 {m.downloads.status === "ok" && (
                   <span className="shrink-0 text-xs tabular-nums text-neutral-500">
                     {fmt(m.downloads)} gesamt
@@ -144,6 +167,8 @@ export default async function DashboardPage() {
                 <th className="px-4 py-3">App</th>
                 <th className="px-4 py-3 text-right">iOS</th>
                 <th className="px-4 py-3 text-right">Android</th>
+                <th className="px-4 py-3 text-right">aktuell</th>
+                <th className="px-4 py-3 text-right">weg</th>
                 <th className="px-4 py-3 text-right">Mitglieder</th>
               </tr>
             </thead>
@@ -152,6 +177,11 @@ export default async function DashboardPage() {
                 <tr key={m.id} className="bg-neutral-950">
                   <td className="px-4 py-4 font-medium">
                     {m.name}
+                    {m.gefunden && (
+                      <span className="ml-1 text-[10px] uppercase tracking-wide text-amber-500">
+                        neu
+                      </span>
+                    )}
                     {m.downloads.status === "ok" && (
                       <span className="block text-xs font-normal tabular-nums text-neutral-500">
                         {fmt(m.downloads)} gesamt
@@ -180,10 +210,14 @@ export default async function DashboardPage() {
         )}
 
         <p className="mt-4 text-xs text-neutral-600">
-          iOS = App Store, Android = Google Play · „–“ = nicht in diesem Store
-          bzw. kein Nutzerkonto-System · „einrichten“ = Quelle noch nicht
-          verbunden · Store-Zahlen werden max. alle 6 h neu geholt und hängen
-          1–3 Tage hinterher.
+          <b>iOS</b> = Erst-Downloads im App Store · <b>Android</b> = Nutzer,
+          die die App je installiert haben · <b>aktuell</b> = Geräte, auf denen
+          sie jetzt liegt (nur Google Play) · <b>weg</b> = Deinstallationen ·
+          „–“ = nicht in diesem Store bzw. kein Nutzerkonto-System ·
+          „einrichten“ = Quelle noch nicht verbunden · „neu“ = in der Quelle
+          gefunden, aber noch nicht in <code>lib/apps.ts</code> benannt ·
+          Store-Zahlen werden max. alle 6 h neu geholt und hängen 1–3 Tage
+          hinterher.
         </p>
       </div>
     </main>

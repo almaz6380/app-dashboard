@@ -71,4 +71,13 @@ export const APPS: AppDef[] = [
     appleAppId: "6797757350",
     androidPackage: "at.gallab.animequiz",
   },
+  {
+    id: "doppeldeutsch",
+    name: "Watten & Schnapsen",
+    hasMembers: false,
+    // Apple-ID noch offen. Liegt die App auch im App Store, taucht sie
+    // vorerst als eigene, automatisch gefundene Zeile auf.
+    stores: ["android"],
+    androidPackage: "at.doppeldeutsch.karten",
+  },
 ];

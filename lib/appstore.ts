@@ -55,14 +55,21 @@ function isDownloadType(pt: string): boolean {
   return t.startsWith("1") || t === "F1";
 }
 
-// Ein Report parsen und Units pro Apple-Identifier aufsummieren.
-function sumReport(tsv: string, into: Map<string, number>): void {
+// Ein Report parsen und Units pro Apple-Identifier aufsummieren. Nebenbei
+// den App-Titel je Apple-ID merken: so koennen auch Apps angezeigt werden,
+// die (noch) nicht in lib/apps.ts stehen.
+function sumReport(
+  tsv: string,
+  into: Map<string, number>,
+  titles: Map<string, string>,
+): void {
   const lines = tsv.split("\n").filter((l) => l.length > 0);
   if (lines.length < 2) return;
   const headers = lines[0].split("\t");
   const iUnits = headers.indexOf("Units");
   const iType = headers.indexOf("Product Type Identifier");
   const iId = headers.indexOf("Apple Identifier");
+  const iTitle = headers.indexOf("Title");
   if (iUnits < 0 || iType < 0 || iId < 0) return;
   for (let r = 1; r < lines.length; r++) {
     const c = lines[r].split("\t");
@@ -72,6 +79,10 @@ function sumReport(tsv: string, into: Map<string, number>): void {
     const id = (c[iId] ?? "").trim();
     if (!id) continue;
     into.set(id, (into.get(id) ?? 0) + units);
+    if (iTitle >= 0) {
+      const title = (c[iTitle] ?? "").trim();
+      if (title && !titles.has(id)) titles.set(id, title);
+    }
   }
 }
 
@@ -124,6 +135,7 @@ type AppleResult =
   | {
       status: "ok";
       byAppleId: Map<string, number>;
+      titleByAppleId: Map<string, string>;
       fetchedAt: number; // Zeitpunkt der Abfrage (ms)
       partial: boolean; // einzelne Berichte fehlten -> Summe evtl. zu niedrig
     }
@@ -154,11 +166,12 @@ async function computeAppleDownloads(): Promise<AppleResult> {
       jobs.push({ frequency: "DAILY", date: `${year}-${pad(month)}-${pad(d)}` });
 
     const totals = new Map<string, number>();
+    const titles = new Map<string, string>();
     let firstError: string | null = null;
     await mapLimit(jobs, 6, async (job) => {
       try {
         const tsv = await fetchReport(cfg, jwt, job.frequency, job.date);
-        if (tsv) sumReport(tsv, totals);
+        if (tsv) sumReport(tsv, totals, titles);
       } catch (e) {
         if (!firstError)
           firstError = e instanceof Error ? e.message : "Fehler";
@@ -170,6 +183,7 @@ async function computeAppleDownloads(): Promise<AppleResult> {
     return {
       status: "ok",
       byAppleId: totals,
+      titleByAppleId: titles,
       fetchedAt: Date.now(),
       partial: firstError !== null,
     };

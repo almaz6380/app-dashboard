@@ -12,9 +12,13 @@ export type AppMetrics = {
   id: string;
   name: string;
   members: Metric;
-  ios: Metric; // Apple App Store
-  android: Metric; // Google Play
+  ios: Metric; // Apple App Store, Erst-Downloads
+  android: Metric; // Google Play, Nutzer die je installiert haben
+  androidAktuell: Metric; // Google Play, aktuell installierte Geraete
+  androidWeg: Metric; // Google Play, Deinstallationen
   downloads: Metric; // iOS + Android, soweit verfuegbar
+  // true = nicht in lib/apps.ts, sondern automatisch in der Quelle gefunden.
+  gefunden?: boolean;
 };
 
 const NOT_CONFIGURED: Metric = { value: null, status: "not-configured" };
@@ -23,6 +27,11 @@ const NOT_IN_STORE: Metric = {
   value: null,
   status: "not-configured",
   detail: "nicht im Store",
+};
+const NO_MEMBERS: Metric = {
+  value: null,
+  status: "not-configured",
+  detail: "keine Konten",
 };
 
 // Zaehlt Zeilen einer Supabase-Tabelle ueber die REST-API,
@@ -72,13 +81,11 @@ export type DashboardData = {
 };
 
 export async function getAllMetrics(): Promise<DashboardData> {
-  // Beide Quellen einmal fuer alle Apps holen.
-  const packages = APPS.map((a) => a.androidPackage).filter(
-    (p): p is string => Boolean(p),
-  );
+  // Beide Quellen liefern alles, was das Konto hergibt - nicht nur die Apps
+  // aus lib/apps.ts. Was dort fehlt, wird unten als eigene Zeile ergaenzt.
   const [apple, google] = await Promise.all([
     getAppleDownloads(),
-    getGoogleInstalls(packages),
+    getGoogleInstalls(),
   ]);
 
   // Pro Plattform eine eigene Zelle. Drei Faelle:
@@ -94,14 +101,32 @@ export async function getAllMetrics(): Promise<DashboardData> {
     return { value: apple.byAppleId.get(app.appleAppId) ?? 0, status: "ok" };
   }
 
-  function androidFor(app: AppDef): Metric {
-    if (!app.stores.includes("android")) return NOT_IN_STORE;
-    if (!app.androidPackage || google.status !== "ok") return NOT_CONFIGURED;
-    // Anders als bei Apple liegt bei Google je App eine eigene Datei. Fehlt
-    // der Eintrag, fehlt der Bericht - das heisst NICHT "0 Installationen".
-    // Genau dieses "?? 0" liess vorher ueberall eine 0 stehen.
-    const n = google.byPackage.get(app.androidPackage);
-    return n === undefined ? NOT_CONFIGURED : { value: n, status: "ok" };
+  // Anders als bei Apple liegt bei Google je App eine eigene Datei. Fehlt
+  // der Eintrag, fehlt der Bericht - das heisst NICHT "0 Installationen".
+  function androidFor(
+    app: AppDef,
+  ): { installs: Metric; aktuell: Metric; weg: Metric } {
+    if (!app.stores.includes("android"))
+      return { installs: NOT_IN_STORE, aktuell: NOT_IN_STORE, weg: NOT_IN_STORE };
+    const z =
+      app.androidPackage && google.status === "ok"
+        ? google.byPackage.get(app.androidPackage)
+        : undefined;
+    if (!z)
+      return {
+        installs: NOT_CONFIGURED,
+        aktuell: NOT_CONFIGURED,
+        weg: NOT_CONFIGURED,
+      };
+    return {
+      installs: zahl(z.installs),
+      aktuell: zahl(z.aktuell),
+      weg: zahl(z.deinstalliert),
+    };
+  }
+
+  function zahl(n: number | null): Metric {
+    return n === null ? NOT_CONFIGURED : { value: n, status: "ok" };
   }
 
   // Gesamt = Summe der Plattformen, die tatsaechlich Daten liefern. Liefert
@@ -121,22 +146,66 @@ export async function getAllMetrics(): Promise<DashboardData> {
     : null;
   const partial = okSources.some((r) => r.partial);
 
-  const apps = await Promise.all(
+  const apps: AppMetrics[] = await Promise.all(
     APPS.map(async (app) => {
-      const members = app.hasMembers
-        ? await countSupabaseRows(app)
-        : { value: null, status: "not-configured" as const, detail: "keine Konten" };
+      const members = app.hasMembers ? await countSupabaseRows(app) : NO_MEMBERS;
       const ios = iosFor(app);
-      const android = androidFor(app);
+      const a = androidFor(app);
       return {
         id: app.id,
         name: app.name,
         members,
         ios,
-        android,
-        downloads: totalFor(ios, android),
+        android: a.installs,
+        androidAktuell: a.aktuell,
+        androidWeg: a.weg,
+        downloads: totalFor(ios, a.installs),
       };
     }),
   );
+
+  // ---- Alles ergaenzen, was die Quellen kennen, lib/apps.ts aber nicht ----
+  // So faellt keine App durchs Raster, nur weil sie nicht eingetragen wurde.
+  const bekanntePakete = new Set(
+    APPS.map((a) => a.androidPackage).filter(Boolean),
+  );
+  const bekannteApple = new Set(APPS.map((a) => a.appleAppId).filter(Boolean));
+
+  if (google.status === "ok") {
+    for (const [paket, z] of google.byPackage) {
+      if (bekanntePakete.has(paket)) continue;
+      const installs = zahl(z.installs);
+      apps.push({
+        id: `play:${paket}`,
+        name: paket,
+        members: NO_MEMBERS,
+        ios: NOT_CONFIGURED,
+        android: installs,
+        androidAktuell: zahl(z.aktuell),
+        androidWeg: zahl(z.deinstalliert),
+        downloads: totalFor(NOT_CONFIGURED, installs),
+        gefunden: true,
+      });
+    }
+  }
+
+  if (apple.status === "ok") {
+    for (const [id, units] of apple.byAppleId) {
+      if (bekannteApple.has(id)) continue;
+      const ios: Metric = { value: units, status: "ok" };
+      apps.push({
+        id: `apple:${id}`,
+        name: apple.titleByAppleId.get(id) ?? `Apple-ID ${id}`,
+        members: NO_MEMBERS,
+        ios,
+        android: NOT_CONFIGURED,
+        androidAktuell: NOT_CONFIGURED,
+        androidWeg: NOT_CONFIGURED,
+        downloads: totalFor(ios, NOT_CONFIGURED),
+        gefunden: true,
+      });
+    }
+  }
+
   return { apps, fetchedAt, partial };
 }

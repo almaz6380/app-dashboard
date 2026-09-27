@@ -1,19 +1,19 @@
 import Link from "next/link";
 
-import { APPS } from "@/lib/apps";
-import { diagnose, INSTALL_COLUMN } from "@/lib/googleplay";
+import {
+  diagnose,
+  SPALTE_AKTIV,
+  SPALTE_DEINSTALLS,
+  SPALTE_INSTALLS,
+} from "@/lib/googleplay";
 
 export const dynamic = "force-dynamic";
 
-// Diagnoseseite fuer die Google-Play-Zahlen. Zeigt, welche Monatsdateien im
-// Bucket liegen, wie die Spalten heissen und welche Summen jeder Monat ergibt.
-// Liegt hinter dem Passwort (proxy.ts). Kann geloescht werden, sobald die
-// Android-Zahlen stimmen.
+// Diagnoseseite fuer die Google-Play-Zahlen. Zeigt alle Pakete im Bucket,
+// die Spaltennamen und die Summen je Monat. Liegt hinter dem Passwort
+// (proxy.ts). Kann geloescht werden, sobald die Zahlen dauerhaft stimmen.
 export default async function DiagnosePage() {
-  const pakete = APPS.map((a) => a.androidPackage).filter(
-    (p): p is string => Boolean(p),
-  );
-  const d = await diagnose(pakete);
+  const d = await diagnose();
 
   const zahl = (n: number | null) =>
     n === null ? "–" : n.toLocaleString("de-AT");
@@ -38,7 +38,8 @@ export default async function DiagnosePage() {
         ) : (
           <>
             <p className="mt-6 text-xs text-neutral-500">
-              Bucket: <code className="text-neutral-300">{d.bucket}</code>
+              Bucket: <code className="text-neutral-300">{d.bucket}</code> ·{" "}
+              {d.pakete.length} Paket(e) gefunden
             </p>
 
             {d.pakete.map((p) => (
@@ -46,20 +47,32 @@ export default async function DiagnosePage() {
                 key={p.paket}
                 className="mt-5 rounded-2xl border border-neutral-800 bg-neutral-900 p-4"
               >
-                <div className="flex items-baseline justify-between gap-3">
-                  <h2 className="font-medium break-all">{p.paket}</h2>
-                  <span className="shrink-0 text-sm font-semibold tabular-nums">
-                    {zahl(p.summe)}
-                  </span>
-                </div>
+                <h2 className="font-medium break-all">{p.paket}</h2>
 
                 {p.fehler ? (
                   <p className="mt-2 text-sm text-red-400">{p.fehler}</p>
                 ) : (
                   <>
-                    <p className="mt-1 text-xs text-neutral-500">
-                      {p.dateien} Monatsdatei(en) gefunden · Summe ={" "}
-                      {INSTALL_COLUMN} über alle Tage
+                    <dl className="mt-2 grid grid-cols-3 gap-2 text-center">
+                      {(
+                        [
+                          ["installiert", p.gesamt.installs],
+                          ["aktuell", p.gesamt.aktuell],
+                          ["deinstalliert", p.gesamt.deinstalliert],
+                        ] as [string, number | null][]
+                      ).map(([label, wert]) => (
+                        <div key={label} className="rounded-xl bg-neutral-950 p-2">
+                          <dt className="text-[10px] uppercase tracking-wide text-neutral-500">
+                            {label}
+                          </dt>
+                          <dd className="mt-0.5 font-semibold tabular-nums">
+                            {zahl(wert)}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <p className="mt-2 text-xs text-neutral-500">
+                      {p.dateien} Monatsdatei(en) im Bucket
                     </p>
 
                     <p className="mt-3 text-xs uppercase tracking-wide text-neutral-500">
@@ -69,8 +82,14 @@ export default async function DiagnosePage() {
                       {p.spalten.map((s, i) => (
                         <li key={s + i} className="break-all">
                           <span className="text-neutral-600">{i}</span> {s}
-                          {s === INSTALL_COLUMN && (
-                            <span className="text-amber-400"> ← gelesen</span>
+                          {s === SPALTE_INSTALLS && (
+                            <span className="text-amber-400"> ← installiert</span>
+                          )}
+                          {s === SPALTE_AKTIV && (
+                            <span className="text-amber-400"> ← aktuell</span>
+                          )}
+                          {s === SPALTE_DEINSTALLS && (
+                            <span className="text-amber-400"> ← deinstalliert</span>
                           )}
                           {s === "Total User Installs" && (
                             <span className="text-neutral-600">
@@ -83,20 +102,19 @@ export default async function DiagnosePage() {
                     </ol>
 
                     <p className="mt-3 text-xs uppercase tracking-wide text-neutral-500">
-                      Summe je Monat
+                      Je Monat
                     </p>
                     <ul className="mt-1 space-y-2 text-xs">
                       {p.monate.map((m) => (
                         <li key={m.datei} className="border-t border-neutral-800 pt-2">
-                          <div className="break-all text-neutral-300">
-                            {m.datei} →{" "}
-                            <span className="font-semibold tabular-nums text-neutral-100">
-                              {zahl(m.nutzerInstalls)}
-                            </span>
-                          </div>
-                          <div className="mt-0.5 tabular-nums text-neutral-500">
-                            Geräte-Installs {zahl(m.geraeteInstalls)} · aktive
-                            Geräte {zahl(m.aktivGeraete)} · {m.tage} Tageszeilen
+                          <div className="break-all text-neutral-300">{m.datei}</div>
+                          <div className="mt-0.5 tabular-nums text-neutral-400">
+                            installiert{" "}
+                            <span className="font-semibold text-neutral-100">
+                              {zahl(m.installs)}
+                            </span>{" "}
+                            · aktuell {zahl(m.aktuell)} · deinstalliert{" "}
+                            {zahl(m.deinstalliert)} · {m.tage} Tageszeilen
                           </div>
                           {m.letzteZeile && (
                             <div className="mt-0.5 break-all text-neutral-600">
