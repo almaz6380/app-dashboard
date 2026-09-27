@@ -12,10 +12,18 @@ export type AppMetrics = {
   id: string;
   name: string;
   members: Metric;
-  downloads: Metric;
+  ios: Metric; // Apple App Store
+  android: Metric; // Google Play
+  downloads: Metric; // iOS + Android, soweit verfuegbar
 };
 
 const NOT_CONFIGURED: Metric = { value: null, status: "not-configured" };
+// App liegt in diesem Store gar nicht -> "-" statt "einrichten".
+const NOT_IN_STORE: Metric = {
+  value: null,
+  status: "not-configured",
+  detail: "nicht im Store",
+};
 
 // Zaehlt Zeilen einer Supabase-Tabelle ueber die REST-API,
 // ohne Zeilendaten zu laden (HEAD + Prefer: count=exact).
@@ -73,27 +81,35 @@ export async function getAllMetrics(): Promise<DashboardData> {
     getGoogleInstalls(packages),
   ]);
 
-  // Downloads = iOS (Apple) + Android (Google), soweit verfuegbar.
-  // Nicht eingerichtete Quellen werden ignoriert; nur wenn KEINE relevante
-  // Quelle Daten liefert und eine davon fehlt/faellt, zeigen wir das an.
-  function downloadsFor(app: AppDef): Metric {
-    // Summiert alle Quellen, die tatsaechlich Daten liefern (Apple iOS +
-    // Google Android). Quellen, die noch nicht verbunden sind oder gerade
-    // klemmen (z.B. Google-Zugriff propagiert noch), werden ignoriert und
-    // erscheinen als "einrichten" statt als Fehler.
-    let sum = 0;
-    let gotData = false;
+  // Pro Plattform eine eigene Zelle. Drei Faelle:
+  //   Zahl          - Quelle verbunden und liefert Daten
+  //   "-"           - App liegt in diesem Store nicht
+  //   "einrichten"  - Store-ID fehlt oder die Quelle ist nicht verbunden bzw.
+  //                   klemmt gerade (z.B. Google-Zugriff propagiert noch)
+  function iosFor(app: AppDef): Metric {
+    if (!app.stores.includes("ios")) return NOT_IN_STORE;
+    if (!app.appleAppId || apple.status !== "ok") return NOT_CONFIGURED;
+    return { value: apple.byAppleId.get(app.appleAppId) ?? 0, status: "ok" };
+  }
 
-    if (app.appleAppId && apple.status === "ok") {
-      sum += apple.byAppleId.get(app.appleAppId) ?? 0;
-      gotData = true;
-    }
-    if (app.androidPackage && google.status === "ok") {
-      sum += google.byPackage.get(app.androidPackage) ?? 0;
-      gotData = true;
-    }
+  function androidFor(app: AppDef): Metric {
+    if (!app.stores.includes("android")) return NOT_IN_STORE;
+    if (!app.androidPackage || google.status !== "ok") return NOT_CONFIGURED;
+    return {
+      value: google.byPackage.get(app.androidPackage) ?? 0,
+      status: "ok",
+    };
+  }
 
-    return gotData ? { value: sum, status: "ok" } : NOT_CONFIGURED;
+  // Gesamt = Summe der Plattformen, die tatsaechlich Daten liefern. Liefert
+  // keine etwas, bleibt die Zelle "einrichten" statt faelschlich 0.
+  function totalFor(ios: Metric, android: Metric): Metric {
+    const parts = [ios, android].filter((m) => m.status === "ok");
+    if (parts.length === 0) return NOT_CONFIGURED;
+    return {
+      value: parts.reduce((s, m) => s + (m.value ?? 0), 0),
+      status: "ok",
+    };
   }
 
   const okSources = [apple, google].filter((r) => r.status === "ok");
@@ -104,17 +120,19 @@ export async function getAllMetrics(): Promise<DashboardData> {
 
   const apps = await Promise.all(
     APPS.map(async (app) => {
-      const [members, downloads] = await Promise.all([
-        app.hasMembers
-          ? countSupabaseRows(app)
-          : Promise.resolve<Metric>({
-              value: null,
-              status: "not-configured",
-              detail: "keine Konten",
-            }),
-        Promise.resolve(downloadsFor(app)),
-      ]);
-      return { id: app.id, name: app.name, members, downloads };
+      const members = app.hasMembers
+        ? await countSupabaseRows(app)
+        : { value: null, status: "not-configured" as const, detail: "keine Konten" };
+      const ios = iosFor(app);
+      const android = androidFor(app);
+      return {
+        id: app.id,
+        name: app.name,
+        members,
+        ios,
+        android,
+        downloads: totalFor(ios, android),
+      };
     }),
   );
   return { apps, fetchedAt, partial };
