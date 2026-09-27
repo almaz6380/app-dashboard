@@ -12,7 +12,8 @@ export type AppMetrics = {
   id: string;
   name: string;
   members: Metric;
-  ios: Metric; // Apple App Store, Erst-Downloads
+  ios: Metric; // Apple App Store, Erst-Downloads (derzeit nicht angezeigt)
+  iosAktuell: Metric; // Apple App Store, aktuelle Installationen
   android: Metric; // Google Play, Nutzer die je installiert haben
   androidAktuell: Metric; // Google Play, aktuell installierte Geraete
   androidWeg: Metric; // Google Play, Deinstallationen
@@ -33,6 +34,11 @@ const NO_MEMBERS: Metric = {
   status: "not-configured",
   detail: "keine Konten",
 };
+// Apples Sales-Reports enthalten nur Erst-Downloads. Aktuelle Installationen
+// gaebe es allein ueber die Analytics Reports API - die ist noch nicht
+// angebunden, und Apple blendet Nutzungsmetriken unter fuenf aktiven Geraeten
+// ohnehin aus. Bis dahin ehrlich "einrichten" statt einer anderen Groesse.
+const APPLE_OHNE_AKTUELL: Metric = { value: null, status: "not-configured" };
 
 // Zaehlt Zeilen einer Supabase-Tabelle ueber die REST-API,
 // ohne Zeilendaten zu laden (HEAD + Prefer: count=exact).
@@ -156,6 +162,7 @@ export async function getAllMetrics(): Promise<DashboardData> {
         name: app.name,
         members,
         ios,
+        iosAktuell: app.stores.includes("ios") ? APPLE_OHNE_AKTUELL : NOT_IN_STORE,
         android: a.installs,
         androidAktuell: a.aktuell,
         androidWeg: a.weg,
@@ -179,7 +186,8 @@ export async function getAllMetrics(): Promise<DashboardData> {
         id: `play:${paket}`,
         name: paket,
         members: NO_MEMBERS,
-        ios: NOT_CONFIGURED,
+        ios: NOT_IN_STORE,
+        iosAktuell: NOT_IN_STORE,
         android: installs,
         androidAktuell: zahl(z.aktuell),
         androidWeg: zahl(z.deinstalliert),
@@ -198,6 +206,7 @@ export async function getAllMetrics(): Promise<DashboardData> {
         name: apple.titleByAppleId.get(id) ?? `Apple-ID ${id}`,
         members: NO_MEMBERS,
         ios,
+        iosAktuell: APPLE_OHNE_AKTUELL,
         android: NOT_CONFIGURED,
         androidAktuell: NOT_CONFIGURED,
         androidWeg: NOT_CONFIGURED,
