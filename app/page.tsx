@@ -52,6 +52,11 @@ export default async function DashboardPage() {
   const totalAndroid = sum((m) => m.android);
   const totalDownloads = sum((m) => m.downloads);
 
+  // Liefert eine Plattform gar keine Daten, waere eine 0 in der Aufteilung
+  // gelogen - dann "-" zeigen.
+  const hasIos = metrics.some((m) => m.ios.status === "ok");
+  const hasAndroid = metrics.some((m) => m.android.status === "ok");
+
   return (
     <main className="min-h-dvh bg-neutral-950 p-4 text-neutral-100 sm:p-8">
       <div className="mx-auto max-w-3xl">
@@ -94,8 +99,8 @@ export default async function DashboardPage() {
             </div>
             {totalDownloads > 0 && (
               <div className="mt-1 text-xs tabular-nums text-neutral-500">
-                iOS {totalIos.toLocaleString("de-AT")} · Android{" "}
-                {totalAndroid.toLocaleString("de-AT")}
+                iOS {hasIos ? totalIos.toLocaleString("de-AT") : "–"} · Android{" "}
+                {hasAndroid ? totalAndroid.toLocaleString("de-AT") : "–"}
               </div>
             )}
           </div>

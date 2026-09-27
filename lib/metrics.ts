@@ -89,16 +89,19 @@ export async function getAllMetrics(): Promise<DashboardData> {
   function iosFor(app: AppDef): Metric {
     if (!app.stores.includes("ios")) return NOT_IN_STORE;
     if (!app.appleAppId || apple.status !== "ok") return NOT_CONFIGURED;
+    // Apple liefert EINEN Bericht ueber alle Apps des Accounts. Fehlt eine
+    // Apple-ID darin, gab es im Zeitraum wirklich keine Downloads -> 0 stimmt.
     return { value: apple.byAppleId.get(app.appleAppId) ?? 0, status: "ok" };
   }
 
   function androidFor(app: AppDef): Metric {
     if (!app.stores.includes("android")) return NOT_IN_STORE;
     if (!app.androidPackage || google.status !== "ok") return NOT_CONFIGURED;
-    return {
-      value: google.byPackage.get(app.androidPackage) ?? 0,
-      status: "ok",
-    };
+    // Anders als bei Apple liegt bei Google je App eine eigene Datei. Fehlt
+    // der Eintrag, fehlt der Bericht - das heisst NICHT "0 Installationen".
+    // Genau dieses "?? 0" liess vorher ueberall eine 0 stehen.
+    const n = google.byPackage.get(app.androidPackage);
+    return n === undefined ? NOT_CONFIGURED : { value: n, status: "ok" };
   }
 
   // Gesamt = Summe der Plattformen, die tatsaechlich Daten liefern. Liefert

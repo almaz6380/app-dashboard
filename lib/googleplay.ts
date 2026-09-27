@@ -81,23 +81,12 @@ async function latestOverviewName(
   return overviews.length ? overviews[overviews.length - 1] : null;
 }
 
-// Kumulierte Gesamt-Installationen aus einer overview.csv lesen.
-async function totalInstalls(
-  bucket: string,
-  name: string,
-  token: string,
-): Promise<number | null> {
-  const url =
-    `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/` +
-    `${encodeURIComponent(name)}?alt=media`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`Get ${name}: HTTP ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
+// Kumulierte Gesamt-Installationen aus dem CSV-Inhalt lesen.
+// Rein und exportiert, damit das Format ohne Netzzugriff testbar ist.
+// Rueckgabe null = Datei unlesbar oder ohne brauchbare Zahl (NICHT "0 Installs").
+export function parseTotalInstalls(buf: Buffer): number | null {
   // UTF-16LE mit BOM -> dekodieren und BOM entfernen
-  const text = buf.toString("utf16le").replace(/^﻿/, "");
+  const text = buf.toString("utf16le").replace(/^\ufeff/, "");
   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length < 2) return null;
   const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
@@ -113,6 +102,22 @@ async function totalInstalls(
     if (Number.isFinite(val)) return val;
   }
   return null;
+}
+
+async function totalInstalls(
+  bucket: string,
+  name: string,
+  token: string,
+): Promise<number | null> {
+  const url =
+    `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/` +
+    `${encodeURIComponent(name)}?alt=media`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Get ${name}: HTTP ${res.status}`);
+  return parseTotalInstalls(Buffer.from(await res.arrayBuffer()));
 }
 
 type GoogleResult =
@@ -133,26 +138,44 @@ async function compute(packages: string[]): Promise<GoogleResult> {
   try {
     const token = await getAccessToken(cfg.sa);
     const byPackage = new Map<string, number>();
+    // Apps ohne Zahl mit Begruendung sammeln. Frueher gingen diese Faelle
+    // still verloren und wurden im Dashboard als "0" angezeigt.
+    const ohneZahl: string[] = [];
     let firstError: string | null = null;
     await Promise.all(
       packages.map(async (pkg) => {
         try {
           const name = await latestOverviewName(cfg.bucket, pkg, token);
-          if (!name) return; // App (noch) nicht im Play Store -> keine Datei
+          if (!name) {
+            ohneZahl.push(`${pkg}: kein Bericht im Bucket`);
+            return;
+          }
           const n = await totalInstalls(cfg.bucket, name, token);
-          if (n !== null) byPackage.set(pkg, n);
+          if (n === null) {
+            ohneZahl.push(`${pkg}: ${name} ohne brauchbare Zahl`);
+            return;
+          }
+          byPackage.set(pkg, n);
         } catch (e) {
-          if (!firstError) firstError = e instanceof Error ? e.message : "Fehler";
+          const msg = e instanceof Error ? e.message : "Fehler";
+          ohneZahl.push(`${pkg}: ${msg}`);
+          if (!firstError) firstError = msg;
         }
       }),
     );
+    // Warum eine App keine Zahl hat, ist im Dashboard nicht sichtbar ->
+    // ins Server-Log, abrufbar mit `vercel logs <deployment>`.
+    if (ohneZahl.length)
+      console.warn("[googleplay] keine Zahl fuer:", ohneZahl.join(" | "));
     if (byPackage.size === 0 && firstError)
       return { status: "error", detail: firstError };
     return {
       status: "ok",
       byPackage,
       fetchedAt: Date.now(),
-      partial: firstError !== null,
+      // Auch ein fehlender Bericht ohne Fehler ist ein Teilergebnis: so wird
+      // es nicht 6h gecacht, sondern beim naechsten Aufruf neu versucht.
+      partial: ohneZahl.length > 0,
     };
   } catch (e) {
     return { status: "error", detail: e instanceof Error ? e.message : "Fehler" };
