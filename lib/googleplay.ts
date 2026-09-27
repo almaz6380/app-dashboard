@@ -64,6 +64,16 @@ async function latestOverviewName(
   pkg: string,
   token: string,
 ): Promise<string | null> {
+  const overviews = await allOverviewNames(bucket, pkg, token);
+  return overviews.length ? overviews[overviews.length - 1] : null;
+}
+
+// Alle Overview-Dateien eines Pakets, chronologisch (Name enthaelt JJJJMM).
+async function allOverviewNames(
+  bucket: string,
+  pkg: string,
+  token: string,
+): Promise<string[]> {
   const prefix = `stats/installs/installs_${pkg}_`;
   const url =
     `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o` +
@@ -74,11 +84,29 @@ async function latestOverviewName(
   });
   if (!res.ok) throw new Error(`List ${pkg}: HTTP ${res.status}`);
   const json = (await res.json()) as { items?: { name: string }[] };
-  const overviews = (json.items ?? [])
+  return (json.items ?? [])
     .map((i) => i.name)
     .filter((n) => n.endsWith("_overview.csv"))
-    .sort(); // Namen enthalten JJJJMM -> alphabetisch = chronologisch
-  return overviews.length ? overviews[overviews.length - 1] : null;
+    .sort();
+}
+
+// Rohen CSV-Text einer Datei holen (fuer die Diagnoseseite).
+async function rawCsv(
+  bucket: string,
+  name: string,
+  token: string,
+): Promise<string> {
+  const url =
+    `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/` +
+    `${encodeURIComponent(name)}?alt=media`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Get ${name}: HTTP ${res.status}`);
+  return Buffer.from(await res.arrayBuffer())
+    .toString("utf16le")
+    .replace(/^\ufeff/, "");
 }
 
 // Kumulierte Gesamt-Installationen aus dem CSV-Inhalt lesen.
@@ -190,4 +218,72 @@ export async function getGoogleInstalls(packages: string[]): Promise<GoogleResul
   if (result.status === "not-configured" || (result.status === "ok" && !result.partial))
     cache = { ts: nowMs, result };
   return result;
+}
+
+// ---- Diagnose ----
+// Zeigt, was wirklich im Bucket liegt: welche Monatsdateien es gibt, wie die
+// Spalten heissen und welche Werte pro Monat herauskommen. Nur aggregierte
+// Zahlen, keine personenbezogenen Daten. Die Seite dazu liegt hinter dem
+// Passwort (proxy.ts schuetzt alles ausser /login).
+export type MonatsDiagnose = {
+  datei: string;
+  wert: number | null; // was parseTotalInstalls liefert
+  letzteZeile: string | null;
+};
+
+export type PaketDiagnose = {
+  paket: string;
+  dateien: number;
+  spalten: string[];
+  monate: MonatsDiagnose[];
+  fehler?: string;
+};
+
+export async function diagnose(
+  packages: string[],
+): Promise<{ bucket: string; pakete: PaketDiagnose[] } | { fehler: string }> {
+  const cfg = readConfig();
+  if (!cfg) return { fehler: "GOOGLE_SERVICE_ACCOUNT_JSON/GOOGLE_PLAY_BUCKET fehlen" };
+  let token: string;
+  try {
+    token = await getAccessToken(cfg.sa);
+  } catch (e) {
+    return { fehler: e instanceof Error ? e.message : "Token-Fehler" };
+  }
+
+  const pakete = await Promise.all(
+    packages.map(async (paket): Promise<PaketDiagnose> => {
+      try {
+        const alle = await allOverviewNames(cfg.bucket, paket, token);
+        // Nur die letzten 6 Monate laden, das reicht zur Beurteilung.
+        const letzte = alle.slice(-6);
+        let spalten: string[] = [];
+        const monate = await Promise.all(
+          letzte.map(async (datei): Promise<MonatsDiagnose> => {
+            const text = await rawCsv(cfg.bucket, datei, token);
+            const zeilen = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+            if (zeilen.length && !spalten.length)
+              spalten = zeilen[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
+            return {
+              datei: datei.replace("stats/installs/", ""),
+              wert: parseTotalInstalls(
+                Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]),
+              ),
+              letzteZeile: zeilen.length > 1 ? zeilen[zeilen.length - 1] : null,
+            };
+          }),
+        );
+        return { paket, dateien: alle.length, spalten, monate };
+      } catch (e) {
+        return {
+          paket,
+          dateien: 0,
+          spalten: [],
+          monate: [],
+          fehler: e instanceof Error ? e.message : "Fehler",
+        };
+      }
+    }),
+  );
+  return { bucket: cfg.bucket, pakete };
 }
