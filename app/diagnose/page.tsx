@@ -28,6 +28,10 @@ export default async function DiagnosePage() {
         <p className="mt-1 text-xs text-neutral-500">
           <Link href="/" className="underline">
             zurück zum Dashboard
+          </Link>{" "}
+          ·{" "}
+          <Link href="/diagnose/apple" className="underline">
+            Apple-Diagnose
           </Link>
         </p>
 

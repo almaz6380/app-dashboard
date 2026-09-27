@@ -10,7 +10,7 @@ import { importPKCS8, SignJWT } from "jose";
 const API = "https://api.appstoreconnect.apple.com/v1/salesReports";
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 Stunden
 
-type AppleConfig = {
+export type AppleConfig = {
   issuerId: string;
   keyId: string;
   privateKey: string; // Inhalt der .p8-Datei
@@ -18,7 +18,8 @@ type AppleConfig = {
   startYear: number;
 };
 
-function readConfig(): AppleConfig | null {
+// Exportiert, damit lib/appleanalytics.ts denselben Schluessel nutzt.
+export function readConfig(): AppleConfig | null {
   const issuerId = process.env.APPSTORE_ISSUER_ID;
   const keyId = process.env.APPSTORE_KEY_ID;
   const rawKey = process.env.APPSTORE_PRIVATE_KEY;
@@ -34,7 +35,7 @@ function readConfig(): AppleConfig | null {
   };
 }
 
-async function makeJwt(cfg: AppleConfig): Promise<string> {
+export async function makeJwt(cfg: AppleConfig): Promise<string> {
   const key = await importPKCS8(cfg.privateKey, "ES256");
   return new SignJWT({})
     .setProtectedHeader({ alg: "ES256", kid: cfg.keyId, typ: "JWT" })
