@@ -33,16 +33,27 @@ jobs:
 
       # Ein neues Cloudflare-Konto hat noch keine workers.dev-Adresse; ohne sie
       # bricht `wrangler deploy` ab. Einmalig anlegen, danach ist das ein No-op.
-      # Dieselbe Adresse wie bei Einnahmen - wer zuerst laeuft, legt sie an.
+      # Die Adresse ist weltweit eindeutig - ist ein Name vergeben, der naechste.
+      # Fehlermeldungen von Cloudflare werden ausgegeben (sie enthalten keine Schluessel).
       - name: workers.dev-Adresse sicherstellen
         run: |
           api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain"
-          name=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$api" | jq -r '.result.subdomain // empty')
+          antwort=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$api")
+          name=$(echo "$antwort" | jq -r '.result.subdomain // empty')
           if [ -z "$name" ]; then
-            curl -s -X PUT -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'content-type: application/json' \
-              -d '{"subdomain":"almaz6380"}' "$api" | jq -e '.success' >/dev/null
-            name=almaz6380
+            echo "Noch keine workers.dev-Adresse: $(echo "$antwort" | jq -c '.errors')"
+            for wunsch in almaz6380 almaz6380-apps gallab-apps; do
+              neu=$(curl -s -X PUT -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'content-type: application/json' \
+                -d "{\"subdomain\":\"$wunsch\"}" "$api")
+              if [ "$(echo "$neu" | jq -r '.success')" = true ]; then name=$wunsch; break; fi
+              echo "$wunsch geht nicht: $(echo "$neu" | jq -c '.errors')"
+            done
           fi
+          if [ -z "$name" ]; then
+            echo "::error::Keine workers.dev-Adresse. Im Cloudflare-Dashboard einmal Workers & Pages oeffnen, dann erneut starten."
+            exit 1
+          fi
+          echo "workers.dev-Adresse: $name"
           echo "WORKERS_SUBDOMAIN=$name" >> "$GITHUB_ENV"
 
       - name: Veroeffentlichen
