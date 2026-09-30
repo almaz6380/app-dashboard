@@ -1,0 +1,20 @@
+# Cloudflare Worker fuer das App-Dashboard (seit 30.09.2026, vorher Next.js auf Vercel).
+# Warum und wie: worker/index.ts, worker/sammeln.ts, docs/CLOUDFLARE.md.
+name = "app-dashboard"
+main = "worker/index.ts"
+compatibility_date = "2026-09-01"
+# process.env, Buffer und zlib fuer die wiederverwendeten Module aus lib/.
+compatibility_flags = ["nodejs_compat"]
+
+# Zustand und fertige Uebersicht. Ohne id legt wrangler den Namensraum beim ersten
+# Deploy selbst an und merkt ihn sich.
+[[kv_namespaces]]
+binding = "DATEN"
+
+[triggers]
+# Alle 10 Minuten ein kleiner Schritt; 144 Laeufe am Tag, je 2 KV-Schreibvorgaenge -
+# weit unter den 1000, die Workers Free erlaubt.
+crons = ["*/10 * * * *"]
+
+[observability]
+enabled = true

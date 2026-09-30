@@ -4,7 +4,11 @@
 
 Privates Ein-Personen-Dashboard, das pro App **Downloads** und **Mitglieder** anzeigt — nur aggregierte Zahlen, keine personenbezogenen Daten. Zugriff nur per Passwort (nur der Besitzer).
 
-Live: https://app-dashboard-nu-six.vercel.app · Deploy via `vercel --prod` (kein Git-Trigger).
+**Seit 30.09.2026 läuft es als Cloudflare Worker** (`worker/`), nicht mehr als Next.js auf
+Vercel — Vercel hatte den ganzen Account pausiert. Adresse: `https://app-dashboard.<subdomain>.workers.dev`.
+Deploy über den Workflow „Cloudflare veroeffentlichen“ (nur von Hand, kein Git-Trigger).
+Aufbau, Grenzen und Secrets: **`docs/CLOUDFLARE.md` zuerst lesen.** Die Next.js-Dateien
+(`app/`, `proxy.ts`) bleiben als Rückweg liegen; `lib/` wird von beiden benutzt.
 
 ## Stack
 Next.js 16 (App Router, Turbopack), React 19, Tailwind 4, Node ≥ 24. Deploy auf Vercel.

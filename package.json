@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:worker": "esbuild worker/sammeln.test.ts --bundle --platform=node --format=esm --outfile=.wrangler/test/sammeln.mjs --log-level=warning && node --test .wrangler/test/sammeln.mjs",
+    "worker:dev": "wrangler dev"
   },
   "dependencies": {
     "jose": "^6.2.3",
@@ -19,9 +21,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wrangler": "^4.145.0"
   }
 }

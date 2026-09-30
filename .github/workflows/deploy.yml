@@ -1,0 +1,86 @@
+name: Cloudflare veroeffentlichen
+
+# Das Dashboard laeuft seit dem 30.09.2026 als Cloudflare Worker (worker/index.ts)
+# statt als Next.js-App auf Vercel. Dieser Workflow testet die Rechenlogik,
+# veroeffentlicht den Worker und uebertraegt die Schluessel aus den GitHub-Secrets.
+#
+# Noetig als GitHub-Secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID,
+# DASHBOARD_PASSWORD. Alles andere ist optional - Liste: docs/CLOUDFLARE.md.
+
+# Nur von Hand: CLAUDE.md verlangt fuer jeden Deploy vorher ein ausdrueckliches "ja".
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: cloudflare
+  cancel-in-progress: false
+
+jobs:
+  veroeffentlichen:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run test:worker
+
+      # Ein neues Cloudflare-Konto hat noch keine workers.dev-Adresse; ohne sie
+      # bricht `wrangler deploy` ab. Einmalig anlegen, danach ist das ein No-op.
+      # Dieselbe Adresse wie bei Einnahmen - wer zuerst laeuft, legt sie an.
+      - name: workers.dev-Adresse sicherstellen
+        run: |
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain"
+          name=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$api" | jq -r '.result.subdomain // empty')
+          if [ -z "$name" ]; then
+            curl -s -X PUT -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'content-type: application/json' \
+              -d '{"subdomain":"almaz6380"}' "$api" | jq -e '.success' >/dev/null
+            name=almaz6380
+          fi
+          echo "WORKERS_SUBDOMAIN=$name" >> "$GITHUB_ENV"
+
+      - name: Veroeffentlichen
+        run: npx wrangler deploy
+
+      - name: Schluessel uebertragen
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          DASHBOARD_SECRET: ${{ secrets.DASHBOARD_SECRET }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_PLAY_BUCKET: ${{ secrets.GOOGLE_PLAY_BUCKET }}
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+          APPSTORE_VENDOR_NUMBER: ${{ secrets.APPSTORE_VENDOR_NUMBER }}
+          APPSTORE_START_YEAR: ${{ secrets.APPSTORE_START_YEAR }}
+          WELLBOOKED_SUPABASE_URL: ${{ secrets.WELLBOOKED_SUPABASE_URL }}
+          WELLBOOKED_SUPABASE_SERVICE_KEY: ${{ secrets.WELLBOOKED_SUPABASE_SERVICE_KEY }}
+          MYPEAK_SUPABASE_URL: ${{ secrets.MYPEAK_SUPABASE_URL }}
+          MYPEAK_SUPABASE_SERVICE_KEY: ${{ secrets.MYPEAK_SUPABASE_SERVICE_KEY }}
+        run: |
+          node scripts/cloudflare-secrets.mjs "$RUNNER_TEMP/secrets.json" \
+            DASHBOARD_PASSWORD DASHBOARD_SECRET GOOGLE_SERVICE_ACCOUNT_JSON GOOGLE_PLAY_BUCKET \
+            APPSTORE_ISSUER_ID APPSTORE_KEY_ID APPSTORE_PRIVATE_KEY APPSTORE_VENDOR_NUMBER APPSTORE_START_YEAR \
+            WELLBOOKED_SUPABASE_URL WELLBOOKED_SUPABASE_SERVICE_KEY MYPEAK_SUPABASE_URL MYPEAK_SUPABASE_SERVICE_KEY
+          if [ "$(cat "$RUNNER_TEMP/secrets.json")" != "{}" ]; then
+            npx wrangler secret bulk "$RUNNER_TEMP/secrets.json"
+          fi
+          rm -f "$RUNNER_TEMP/secrets.json"
+
+      - name: Gegenprobe
+        run: |
+          url="https://app-dashboard.$WORKERS_SUBDOMAIN.workers.dev"
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$url/login" || true)
+            [ "$code" = 200 ] && break
+            sleep 10
+          done
+          echo "login: $code"
+          echo "## Dashboard veroeffentlicht: $url" >> "$GITHUB_STEP_SUMMARY"
+          [ "$code" = 200 ]

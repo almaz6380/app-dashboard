@@ -71,7 +71,7 @@ function isDownloadType(pt: string): boolean {
 // Ein Report parsen und Units pro Apple-Identifier aufsummieren. Nebenbei
 // den App-Titel je Apple-ID merken: so koennen auch Apps angezeigt werden,
 // die (noch) nicht in lib/apps.ts stehen.
-function sumReport(
+export function sumReport(
   tsv: string,
   into: Map<string, number>,
   titles: Map<string, string>,
