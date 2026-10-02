@@ -1,0 +1,36 @@
+name: Diagnose
+
+# Liest den gespeicherten Zustand des Workers aus Cloudflare KV und gibt eine
+# Zusammenfassung ins Log: Zahlen, Fehlermeldungen, Ladefortschritt. Keine
+# Schluessel - im Zustand stehen keine. Aendert nichts, veroeffentlicht nichts.
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/gallant-shannon-a95vke]
+    paths: [.github/workflows/diagnose.yml, scripts/diagnose.mjs, scripts/play-spalten.mjs]
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Zustand lesen
+        run: |
+          npx wrangler kv namespace list > "$RUNNER_TEMP/ns.json"
+          id=$(node -e 'const l=require(process.argv[1]);const n=l.find(x=>/DATEN/i.test(x.title))||l.find(x=>/app-dashboard/i.test(x.title));console.log(n?n.id:"")' "$RUNNER_TEMP/ns.json")
+          echo "Namensraum: $(node -e 'console.log(require(process.argv[1]).map(x=>x.title).join(", "))' "$RUNNER_TEMP/ns.json")"
+          npx wrangler kv key get zustand --namespace-id "$id" --remote > "$RUNNER_TEMP/zustand.json"
+          node scripts/diagnose.mjs "$RUNNER_TEMP/zustand.json"
+      - name: Play-Berichte ansehen
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_PLAY_BUCKET: ${{ secrets.GOOGLE_PLAY_BUCKET }}
+        run: node scripts/play-spalten.mjs
