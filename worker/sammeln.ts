@@ -25,6 +25,7 @@ const APPLE_NOCHMAL_MS = 6 * 60 * 60 * 1000;
 const MAX_ANALYTIK = 12;
 const ANFRAGEN_NOCHMAL_MS = 24 * 60 * 60 * 1000;
 const INSTANZEN_NOCHMAL_MS = 6 * 60 * 60 * 1000;
+const FEHLER_NOCHMAL_MS = 30 * 60 * 1000;
 
 export type Metric = { value: number | null; status: "ok" | "not-configured" | "error"; detail?: string };
 
@@ -275,7 +276,8 @@ async function analytikSchritt(z: Zustand, cfg: AppleConfig, jetzt: number): Pro
   for (const app of apps) {
     if (budget <= 0) return;
     const alt = a.anfragen[app];
-    if (alt && jetzt - alt.geholt < ANFRAGEN_NOCHMAL_MS) continue;
+    // Nach einem Fehler (z. B. Vereinbarung fehlte) schon nach 30 Minuten wieder versuchen.
+    if (alt && jetzt - alt.geholt < (alt.fehler ? FEHLER_NOCHMAL_MS : ANFRAGEN_NOCHMAL_MS)) continue;
     budget--;
     const liste = await leseAnfragen(await token(), app);
     // Fehler merken und erst morgen wieder versuchen - nicht jeden Lauf.
@@ -464,6 +466,7 @@ export function uebersicht(z: Zustand, jetzt = Date.now()): Uebersicht {
   // Apple-Analytics-Probleme bleiben stehen, bis sie behoben sind (z.fehler gilt nur einen Lauf).
   const apfel = Object.entries(z.analytik?.anfragen ?? {}).filter(([, x]) => x.fehler).map(([id, x]) => `Apple-Löschungen ${id}: ${x.fehler}`);
   const unvollstaendig = [...jePaket.values()].some((p) => !p.vollstaendig) || Object.keys(z.fehler).length > 0 || apfel.length > 0;
-  const hinweise = [...apfel, ...Object.entries(z.fehler).map(([k, v]) => `${k}: ${v}`)];
+  // Gleiche Meldung fuer mehrere Apps nur einmal zeigen.
+  const hinweise = [...new Set([...apfel.map((h) => h.replace(/^Apple-Löschungen \d+/, "Apple")), ...Object.entries(z.fehler).map(([k, v]) => `${k}: ${v}`)])];
   return { zeilen, stand: z.lauf || null, unvollstaendig, hinweise };
 }
