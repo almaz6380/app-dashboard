@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
   push:
     branches: [claude/gallant-shannon-a95vke]
-    paths: [.github/workflows/diagnose.yml, scripts/diagnose.mjs]
+    paths: [.github/workflows/diagnose.yml, scripts/diagnose.mjs, scripts/play-spalten.mjs]
 
 jobs:
   diagnose:
@@ -29,3 +29,8 @@ jobs:
           echo "Namensraum: $(node -e 'console.log(require(process.argv[1]).map(x=>x.title).join(", "))' "$RUNNER_TEMP/ns.json")"
           npx wrangler kv key get zustand --namespace-id "$id" --remote > "$RUNNER_TEMP/zustand.json"
           node scripts/diagnose.mjs "$RUNNER_TEMP/zustand.json"
+      - name: Play-Berichte ansehen
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_PLAY_BUCKET: ${{ secrets.GOOGLE_PLAY_BUCKET }}
+        run: node scripts/play-spalten.mjs
