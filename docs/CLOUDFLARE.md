@@ -53,8 +53,8 @@ Cloudflare nichts.
 | `GOOGLE_PLAY_BUCKET` | für Android | Play Console → Berichte herunterladen → „Cloud Storage-URI kopieren“ |
 | `WELLBOOKED_SUPABASE_URL`, `WELLBOOKED_SUPABASE_SERVICE_KEY` | für Mitglieder | Supabase → Projekt → Settings → API |
 | `MYPEAK_SUPABASE_URL`, `MYPEAK_SUPABASE_SERVICE_KEY` | für Mitglieder | wie oben, FullRep-Projekt |
-| `APPSTORE_ISSUER_ID`, `APPSTORE_KEY_ID`, `APPSTORE_PRIVATE_KEY`, `APPSTORE_VENDOR_NUMBER` | für iOS | App Store Connect → Benutzer und Zugriff → Integrationen → App Store Connect API (Rolle „Sales and Reports“ reicht) |
-| `APPSTORE_ADMIN_KEY_ID`, `APPSTORE_ADMIN_PRIVATE_KEY` | einmalig für iOS | wie oben, Rolle **Admin**; nur zum Anfordern der Analytics-Berichte, danach entbehrlich |
+| `APPSTORE_ISSUER_ID`, `APPSTORE_KEY_ID`, `APPSTORE_PRIVATE_KEY`, `APPSTORE_VENDOR_NUMBER` | für iOS | App Store Connect → Benutzer und Zugriff → Integrationen → App Store Connect API, Rolle **Admin** (dann genügt dieser eine Schlüssel) |
+| `APPSTORE_ADMIN_KEY_ID`, `APPSTORE_ADMIN_PRIVATE_KEY` | nein | nur falls der Schlüssel oben **keine** Admin-Rolle hat: zusätzlicher Admin-Schlüssel zum Anfordern der Analytics-Berichte |
 
 ## iOS: aktuelle Installationen (seit 02.10.2026)
 

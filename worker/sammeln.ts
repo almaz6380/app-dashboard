@@ -284,9 +284,9 @@ async function analytikSchritt(z: Zustand, cfg: AppleConfig, jetzt: number): Pro
     a.anfragen[app] = eintrag;
     const fehlend = (["ONGOING", "ONE_TIME_SNAPSHOT"] as const).filter((t) => !liste.some((x) => x.accessType === t));
     if (!fehlend.length) continue;
-    const admin = readAdminConfig();
-    if (!admin) { if (!liste.length) eintrag.fehler = "noch nicht angefordert (APPSTORE_ADMIN_* fehlt)"; continue; }
-    const adminJwt = await makeJwt(admin);
+    // Anfordern braucht die Admin-Rolle. Ohne eigenen Admin-Schluessel den normalen
+    // versuchen - hat er die Rolle, reicht ein einziger Schluessel; sonst 403 im Hinweis.
+    const adminJwt = await makeJwt(readAdminConfig() ?? cfg);
     for (const typ of fehlend) {
       budget--;
       const r = await fordereAn(adminJwt, app, typ);
