@@ -1,7 +1,7 @@
 // Reine Logik aus worker/sammeln.ts, ohne Netz. Ausfuehren: npm run test:worker
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { playAuswahl, playJePaket, appleAuftraege, appleAuswahl, uebersicht, leererZustand } from "./sammeln";
+import { playAuswahl, playJePaket, appleAuftraege, appleAuswahl, uebersicht, leererZustand, loeschungenAus, loeschungenMerken, iosAktuell, leereAnalytik } from "./sammeln";
 
 const datei = (paket: string, monat: string) => `stats/installs/installs_${paket}_${monat}_overview.csv`;
 const JETZT = Date.UTC(2026, 8, 30, 12); // 30.09.2026
@@ -49,4 +49,43 @@ test("uebersicht: bekannte Apps mit Android-Zahl, unbekanntes Paket als neu", ()
   assert.equal(u.zeilen.find((r) => r.id === "doppeldeutsch")?.ios.detail, "nicht im Store");
   assert.equal(u.zeilen.find((r) => r.id === "play:com.unbekannt")?.neu, true);
   assert.equal(u.unvollstaendig, false);
+});
+
+const TSV = [
+  "Date\tApp Name\tApp Apple Identifier\tEvent\tDownload Type\tTerritory\tCounts\tUnique Devices",
+  "2026-09-28\tSwaply\t6787695557\tInstall\tFirst-time download\tAT\t5\t5",
+  "2026-09-28\tSwaply\t6787695557\tDelete\t\tAT\t2\t2",
+  "2026-09-28\tSwaply\t6787695557\tDelete\t\tDE\t1\t1",
+  "2026-09-29\tSwaply\t6787695557\tDelete\t\tAT\t3\t3",
+].join("\n");
+
+test("loeschungenAus: nur Delete-Zeilen, je App und Tag summiert", () => {
+  assert.deepEqual(loeschungenAus(TSV, "x"), { "6787695557": { "2026-09-28": 3, "2026-09-29": 3 } });
+  assert.throws(() => loeschungenAus("A\tB\n1\t2", "x"), /Spalten unbekannt/);
+});
+
+test("loeschungenMerken: gleicher Tag aus Snapshot und laufender Anforderung zaehlt einmal", () => {
+  const a = leereAnalytik();
+  loeschungenMerken(a, loeschungenAus(TSV, "x"));
+  loeschungenMerken(a, loeschungenAus(TSV, "x"));
+  assert.deepEqual(a.loeschungen["6787695557"], { "2026-09-28": 3, "2026-09-29": 3 });
+});
+
+test("iosAktuell: Erst-Downloads minus Loeschungen, erst wenn alles geladen ist", () => {
+  const app = "6787695557";
+  const z = leererZustand();
+  const auftraege = appleAuftraege(2026, JETZT, {});
+  for (const k of auftraege) z.apple[k] = { units: { [app]: 2 }, geholt: 1 };
+  assert.equal(iosAktuell(z, app, 2026, JETZT).detail, "Löschungen fehlen");
+  z.analytik!.instanzen.r1 = { app, ids: ["i1", "i2"], geholt: 1 };
+  z.analytik!.erledigt.i1 = 1;
+  assert.equal(iosAktuell(z, app, 2026, JETZT).detail, "lädt");
+  z.analytik!.erledigt.i2 = 1;
+  loeschungenMerken(z.analytik!, loeschungenAus(TSV, app));
+  const m = iosAktuell(z, app, 2026, JETZT);
+  assert.equal(m.value, auftraege.length * 2 - 6);
+  assert.equal(m.status, "ok");
+  // Ein fehlender Sales-Bericht -> noch keine Zahl statt einer zu niedrigen.
+  delete z.apple[auftraege[0]];
+  assert.equal(iosAktuell(z, app, 2026, JETZT).detail, "lädt");
 });
