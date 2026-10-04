@@ -40,7 +40,10 @@ function rahmen(titel: string, inhalt: string): string {
 const zahl = (n: number) => n.toLocaleString("de-AT");
 
 function fmt(m: Metric): string {
-  if (m.status === "ok" && m.value !== null) return m.detail === "ca." ? `ca. ${zahl(m.value)}` : zahl(m.value);
+  if (m.status === "ok" && m.value !== null) {
+    if (m.detail === "Downloads") return `${zahl(m.value)} <span class="fein">Downloads</span>`;
+    return m.detail === "ca." ? `ca. ${zahl(m.value)}` : zahl(m.value);
+  }
   if (m.status === "not-configured" && m.detail === "lädt") return "lädt …";
   if (m.status === "not-configured") return m.detail === "keine Konten" || m.detail === "nicht im Store" ? "–" : "einrichten";
   return "Fehler";
@@ -68,9 +71,11 @@ export function uebersichtSeite(u: Uebersicht | null): string {
     : null;
   const summe = (pick: (z: Uebersicht["zeilen"][number]) => Metric) =>
     u.zeilen.reduce((s, z) => s + (pick(z).status === "ok" ? pick(z).value ?? 0 : 0), 0);
-  const hatIos = u.zeilen.some((z) => z.ios.status === "ok");
+  // iOS-Downloads sind keine Installationen und zaehlen in der Kachel nicht mit.
+  const iosInstalliert = (z: Uebersicht["zeilen"][number]): Metric => (z.ios.detail === "Downloads" ? { value: null, status: "not-configured" } : z.ios);
+  const hatIos = u.zeilen.some((z) => iosInstalliert(z).status === "ok");
   const hatAndroid = u.zeilen.some((z) => z.android.status === "ok");
-  const quellen = hatIos && hatAndroid ? "iOS + Android" : hatAndroid ? "nur Android – iOS lädt noch bzw. fehlt" : hatIos ? "nur iOS" : "";
+  const quellen = hatIos && hatAndroid ? "iOS + Android" : hatAndroid ? "nur Android – iOS zeigt vorerst Downloads" : hatIos ? "nur iOS" : "";
   const zellen = (z: Uebersicht["zeilen"][number]): [string, Metric][] => [["iOS", z.ios], ["Android", z.android], ["Mitglieder", z.mitglieder]];
   const name = (z: Uebersicht["zeilen"][number]) => `${esc(z.name)}${z.neu ? '<span class="neu">neu</span>' : ""}`;
 
@@ -85,7 +90,7 @@ export function uebersichtSeite(u: Uebersicht | null): string {
 </header>
 <div class="kacheln">
   <div class="kachel"><div class="etikett">Mitglieder gesamt</div><div class="gross">${zahl(summe((z) => z.mitglieder))}</div></div>
-  <div class="kachel"><div class="etikett">Aktuell installiert</div><div class="gross">${hatIos || hatAndroid ? zahl(summe((z) => z.ios) + summe((z) => z.android)) : "—"}</div>
+  <div class="kachel"><div class="etikett">Aktuell installiert</div><div class="gross">${hatIos || hatAndroid ? zahl(summe(iosInstalliert) + summe((z) => z.android)) : "—"}</div>
     <div class="fein">${quellen}</div></div>
 </div>
 <ul class="karten">${u.zeilen.map((z) => `
@@ -98,5 +103,5 @@ export function uebersichtSeite(u: Uebersicht | null): string {
   <tbody>${u.zeilen.map((z) => `<tr><td>${name(z)}</td>${zellen(z).map(([, m]) => `<td class="${klasse(m)}">${fmt(m)}</td>`).join("")}</tr>`).join("")}</tbody>
 </table>
 ${u.unvollstaendig ? `<p class="warn">Einige Store-Berichte fehlen noch oder konnten nicht geladen werden – Zahlen evtl. zu niedrig. Der Abruf alle 10 Minuten holt sie nach.${u.hinweise.length ? `<br>${u.hinweise.slice(0, 5).map(esc).join("<br>")}` : ""}</p>` : ""}
-<p class="fein" style="margin-top:16px">Gezeigt werden <b>aktuelle Installationen</b>, keine Gesamt-Downloads. Gelöschte Installationen zählen nicht. <b>Android</b> = Geräte, auf denen die App jetzt liegt (Google „Active Device Installs“; in der Play Console vergleichbar mit „Installierte Zielgruppe“ nach <i>Geräten</i>, hängt 2–3 Tage nach). <b>iOS</b> = Erst-Downloads minus Löschungen (ca.: Apple meldet Löschungen nur von Nutzern mit Analyse-Freigabe, die Zahl liegt darum eher etwas zu hoch). „–“ = nicht in diesem Store bzw. kein Nutzerkonto-System · „neu“ = in der Quelle gefunden, aber noch nicht in <code>lib/apps.ts</code> benannt.</p>`);
+<p class="fein" style="margin-top:16px">Gezeigt werden <b>aktuelle Installationen</b>, keine Gesamt-Downloads. Gelöschte Installationen zählen nicht. <b>Android</b> = Geräte, auf denen die App jetzt liegt (Google „Active Device Installs“; in der Play Console vergleichbar mit „Installierte Zielgruppe“ nach <i>Geräten</i>, hängt 2–3 Tage nach). <b>iOS</b> = Erst-Downloads minus Löschungen (ca.: Apple meldet Löschungen nur von Nutzern mit Analyse-Freigabe, die Zahl liegt darum eher etwas zu hoch). Solange Apple die Löschungen noch nicht liefert, steht dort vorerst die Zahl der <b>Downloads</b> (Erst-Downloads, ohne Löschungen). „–“ = nicht in diesem Store bzw. kein Nutzerkonto-System · „neu“ = in der Quelle gefunden, aber noch nicht in <code>lib/apps.ts</code> benannt.</p>`);
 }

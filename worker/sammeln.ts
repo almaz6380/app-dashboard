@@ -347,10 +347,11 @@ export function iosAktuell(z: Zustand, app: string, startJahr: number, jetzt: nu
   const auftraege = appleAuftraege(startJahr, jetzt, z.apple);
   if (auftraege.some((k) => !z.apple[k])) return { value: null, status: "not-configured", detail: "lädt" };
   const a = z.analytik ?? leereAnalytik();
-  const hatBericht = Object.values(a.instanzen).some((i) => i.app === app && i.ids.length > 0);
-  if (!hatBericht) return { value: null, status: "not-configured", detail: "Löschungen fehlen" };
-  if (offeneInstanzen(a, app).length) return { value: null, status: "not-configured", detail: "lädt" };
   const downloads = auftraege.reduce((s, k) => s + (z.apple[k]?.units?.[app] ?? 0), 0);
+  // Bis Apple die Loeschungen liefert (Analytics-Berichte, kann Tage dauern), lieber
+  // die Erst-Downloads zeigen - klar als "Downloads" beschriftet - als gar nichts.
+  const hatBericht = Object.values(a.instanzen).some((i) => i.app === app && i.ids.length > 0);
+  if (!hatBericht || offeneInstanzen(a, app).length) return { value: downloads, status: "ok", detail: "Downloads" };
   const weg = Object.values(a.loeschungen[app] ?? {}).reduce((s, n) => s + n, 0);
   return { value: Math.max(0, downloads - weg), status: "ok", detail: "ca." };
 }

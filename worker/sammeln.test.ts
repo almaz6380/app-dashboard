@@ -76,10 +76,11 @@ test("iosAktuell: Erst-Downloads minus Loeschungen, erst wenn alles geladen ist"
   const z = leererZustand();
   const auftraege = appleAuftraege(2026, JETZT, {});
   for (const k of auftraege) z.apple[k] = { units: { [app]: 2 }, geholt: 1 };
-  assert.equal(iosAktuell(z, app, 2026, JETZT).detail, "Löschungen fehlen");
+  // Ohne Loeschungen: vorerst die Downloads, als solche beschriftet.
+  assert.deepEqual(iosAktuell(z, app, 2026, JETZT), { value: auftraege.length * 2, status: "ok", detail: "Downloads" });
   z.analytik!.instanzen.r1 = { app, ids: ["i1", "i2"], geholt: 1 };
   z.analytik!.erledigt.i1 = 1;
-  assert.equal(iosAktuell(z, app, 2026, JETZT).detail, "lädt");
+  assert.equal(iosAktuell(z, app, 2026, JETZT).detail, "Downloads");
   z.analytik!.erledigt.i2 = 1;
   loeschungenMerken(z.analytik!, loeschungenAus(TSV, app));
   const m = iosAktuell(z, app, 2026, JETZT);
