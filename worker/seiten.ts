@@ -6,7 +6,10 @@ import type { Metric, Uebersicht } from "./sammeln";
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 const CSS = `
-*{box-sizing:border-box}html{color-scheme:dark;overscroll-behavior-y:contain}
+/* Kein overscroll-behavior hier: Diese Seite baut der Server, Neuladen IST das
+   Aktualisieren, und ein eigenes Runterziehen gibt es nicht. Wer es abschaltet,
+   nimmt die einzige verlaessliche Art weg, frische Zahlen zu holen. */
+*{box-sizing:border-box}html{color-scheme:dark}
 body{margin:0;min-height:100dvh;background:#0a0a0a;color:#f5f5f5;font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 main{max-width:56rem;margin:0 auto;padding:16px}@media(min-width:640px){main{padding:32px}}
 h1{font-size:1.25rem;margin:0}.leise{color:#a3a3a3;font-size:.875rem;margin:0}.fein{color:#737373;font-size:.75rem}
@@ -112,7 +115,10 @@ export function uebersichtSeite(u: Uebersicht | null): string {
     <p class="leise">Aktuelle Installationen &amp; Mitglieder – nur Zahlen.</p>
     ${stand ? `<p class="fein">Stand: ${stand} Uhr</p>` : ""}
   </div>
-  <form method="post" action="/api/logout"><button>Abmelden</button></form>
+  <div style="display:flex;gap:8px">
+    <button type="button" onclick="location.reload()">Aktualisieren</button>
+    <form method="post" action="/api/logout"><button>Abmelden</button></form>
+  </div>
 </header>
 <div class="kacheln">
   <div class="kachel"><div class="etikett">Mitglieder gesamt</div><div class="gross">${zahl(summe((z) => z.mitglieder))}</div></div>
