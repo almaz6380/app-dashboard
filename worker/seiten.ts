@@ -6,7 +6,7 @@ import type { Metric, Uebersicht } from "./sammeln";
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 const CSS = `
-*{box-sizing:border-box}html{color-scheme:dark}
+*{box-sizing:border-box}html{color-scheme:dark;overscroll-behavior-y:contain}
 body{margin:0;min-height:100dvh;background:#0a0a0a;color:#f5f5f5;font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 main{max-width:56rem;margin:0 auto;padding:16px}@media(min-width:640px){main{padding:32px}}
 h1{font-size:1.25rem;margin:0}.leise{color:#a3a3a3;font-size:.875rem;margin:0}.fein{color:#737373;font-size:.75rem}
@@ -29,12 +29,30 @@ form.login{max-width:20rem;margin:20vh auto 0;display:grid;gap:12px}
 input{background:#171717;border:1px solid #262626;border-radius:8px;color:#f5f5f5;padding:10px 12px;font:inherit}
 `;
 
-function rahmen(titel: string, inhalt: string): string {
+// Die Seite ist am Server gebaut und aendert sich nur, wenn der Cron neue Zahlen
+// geschrieben hat - sonst stand hier die Zahl von damals, bis jemand von Hand neu lud.
+// Darum fragt sie im Minutentakt nur den Zeitstempel ab (/api/stand: ein KV-Lesevorgang,
+// kein HTML, keine nennenswerte CPU) und laedt sich erst neu, wenn er sich geaendert hat.
+// Sofort fragt sie, wenn das Fenster wieder nach vorn kommt; am Handy ist das der Moment,
+// in dem veraltete Zahlen auffallen. Mehrere Ereignisse, weil keines allein reicht:
+// visibilitychange bleibt auf dem iPhone aus, wenn die Seite aus dem Seiten-
+// Zwischenspeicher zurueckkommt (pageshow) oder nur den Fokus wiederbekommt (focus).
+// Bewusst von Hand geschrieben und winzig: kein Framework, nichts nachzuladen.
+const selbstAktuell = (stand: number | null) => `<script>
+(()=>{let s=${JSON.stringify(stand)},l=0;
+const p=async()=>{if(document.hidden||Date.now()-l<2000)return;l=Date.now();
+try{const r=await fetch("/api/stand",{cache:"no-store"});const j=await r.json();
+if(j.stand&&j.stand!==s)location.reload();}catch(e){}};
+setInterval(p,60000);document.addEventListener("visibilitychange",p);
+for(const e of ["pageshow","focus","online"])addEventListener(e,p);})();
+</script>`;
+
+function rahmen(titel: string, inhalt: string, stand?: number | null): string {
   return `<!doctype html><html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0a0a0a"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="robots" content="noindex"><title>${esc(titel)}</title><style>${CSS}</style></head>
-<body><main>${inhalt}</main></body></html>`;
+<body><main>${inhalt}</main>${stand === undefined ? "" : selbstAktuell(stand)}</body></html>`;
 }
 
 const zahl = (n: number) => n.toLocaleString("de-AT");
@@ -62,9 +80,10 @@ export function loginSeite(fehler?: string): string {
 
 export function uebersichtSeite(u: Uebersicht | null): string {
   if (!u) {
+    // Auch ohne Zahlen mit Skript: so erscheinen die ersten von selbst, sobald sie da sind.
     return rahmen("App-Dashboard", `<h1>App-Dashboard</h1>
 <p class="leise">Noch keine Zahlen. Der erste Abruf läuft alle 10 Minuten; das Auffüllen dauert beim ersten Mal etwa eine Stunde.</p>
-<form method="post" action="/api/aktualisieren"><button>Jetzt einen Schritt abrufen</button></form>`);
+<form method="post" action="/api/aktualisieren"><button>Jetzt einen Schritt abrufen</button></form>`, null);
   }
   const stand = u.stand
     ? new Date(u.stand).toLocaleString("de-AT", { timeZone: "Europe/Vienna", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
@@ -103,5 +122,5 @@ export function uebersichtSeite(u: Uebersicht | null): string {
   <tbody>${u.zeilen.map((z) => `<tr><td>${name(z)}</td>${zellen(z).map(([, m]) => `<td class="${klasse(m)}">${fmt(m)}</td>`).join("")}</tr>`).join("")}</tbody>
 </table>
 ${u.unvollstaendig ? `<p class="warn">Einige Store-Berichte fehlen noch oder konnten nicht geladen werden – Zahlen evtl. zu niedrig. Der Abruf alle 10 Minuten holt sie nach.${u.hinweise.length ? `<br>${u.hinweise.slice(0, 5).map(esc).join("<br>")}` : ""}</p>` : ""}
-<p class="fein" style="margin-top:16px">Gezeigt werden <b>aktuelle Installationen</b>, keine Gesamt-Downloads. Gelöschte Installationen zählen nicht. <b>Android</b> = Geräte, auf denen die App jetzt liegt (Google „Active Device Installs“; in der Play Console vergleichbar mit „Installierte Zielgruppe“ nach <i>Geräten</i>, hängt 2–3 Tage nach). <b>iOS</b> = Erst-Downloads minus Löschungen (ca.: Apple meldet Löschungen nur von Nutzern mit Analyse-Freigabe, die Zahl liegt darum eher etwas zu hoch). Solange Apple die Löschungen noch nicht liefert, steht dort vorerst die Zahl der <b>Downloads</b> (Erst-Downloads, ohne Löschungen). „–“ = nicht in diesem Store bzw. kein Nutzerkonto-System · „neu“ = in der Quelle gefunden, aber noch nicht in <code>lib/apps.ts</code> benannt.</p>`);
+<p class="fein" style="margin-top:16px">Gezeigt werden <b>aktuelle Installationen</b>, keine Gesamt-Downloads. Gelöschte Installationen zählen nicht. <b>Android</b> = Geräte, auf denen die App jetzt liegt (Google „Active Device Installs“; in der Play Console vergleichbar mit „Installierte Zielgruppe“ nach <i>Geräten</i>, hängt 2–3 Tage nach). <b>iOS</b> = Erst-Downloads minus Löschungen (ca.: Apple meldet Löschungen nur von Nutzern mit Analyse-Freigabe, die Zahl liegt darum eher etwas zu hoch). Solange Apple die Löschungen noch nicht liefert, steht dort vorerst die Zahl der <b>Downloads</b> (Erst-Downloads, ohne Löschungen). „–“ = nicht in diesem Store bzw. kein Nutzerkonto-System · „neu“ = in der Quelle gefunden, aber noch nicht in <code>lib/apps.ts</code> benannt.</p>`, u.stand);
 }

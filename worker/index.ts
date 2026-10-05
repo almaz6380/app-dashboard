@@ -81,6 +81,17 @@ export default {
       return weiter("/");
     }
 
+    // Nur der Zeitstempel des letzten Laufs. Danach fragt die offene Seite im
+    // Minutentakt, um neue Zahlen des Cron von selbst zu zeigen (worker/seiten.ts).
+    // Ein KV-Lesevorgang, kein HTML - KV-Lesen ist bei Workers Free reichlich frei,
+    // und geschrieben wird hier nichts, die 1000 Schreibvorgaenge bleiben dem Cron.
+    if (url.pathname === "/api/stand") {
+      const u = await env.DATEN.get<Uebersicht>(UEBERSICHT, "json");
+      return new Response(JSON.stringify({ stand: u?.stand ?? null }), {
+        headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+
     if (url.pathname === "/") {
       const u = await env.DATEN.get<Uebersicht>(UEBERSICHT, "json");
       return html(uebersichtSeite(u));
