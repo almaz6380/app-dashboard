@@ -71,3 +71,10 @@ for (const app of apps) {
     console.log(`  FEHLER ${e.message}`);
   }
 }
+
+// Alle Apps im App-Store-Connect-Konto (Name, Apple-ID, Bundle-ID) - zum Abgleich mit lib/apps.ts.
+console.log("\nApps im Konto:");
+for (const a of await alle("/apps?fields[apps]=name,bundleId&limit=200")) {
+  const bekannt = apps.some((x) => x.id === a.id) ? "" : "   <- fehlt in lib/apps.ts";
+  console.log(`  ${a.id}  ${a.attributes?.name}  (${a.attributes?.bundleId})${bekannt}`);
+}
