@@ -20,13 +20,16 @@ async function hmacHex(secret: string, message: string): Promise<string> {
 
 export const AUTH_COOKIE = "dash_auth";
 
+// Ohne DASHBOARD_SECRET gibt es keinen Login: Ein fest eingebauter Ersatzwert
+// waere im Repo nachlesbar, und damit liesse sich das Cookie selbst bauen.
 export async function expectedToken(): Promise<string> {
-  const secret = process.env.DASHBOARD_SECRET || "dev-secret-change-me";
+  const secret = process.env.DASHBOARD_SECRET;
+  if (!secret) throw new Error("DASHBOARD_SECRET fehlt");
   return hmacHex(secret, "app-dashboard-auth-v1");
 }
 
 export async function isValidToken(token: string | undefined): Promise<boolean> {
-  if (!token) return false;
+  if (!token || !process.env.DASHBOARD_SECRET) return false;
   const expected = await expectedToken();
   // laengengleicher Vergleich (nicht kritisch bei einem Nutzer, aber sauber)
   if (token.length !== expected.length) return false;
@@ -38,7 +41,7 @@ export async function isValidToken(token: string | undefined): Promise<boolean> 
 
 export function checkPassword(input: string): boolean {
   const pw = process.env.DASHBOARD_PASSWORD;
-  if (!pw) return false; // ohne gesetztes Passwort kein Login moeglich
+  if (!pw || !process.env.DASHBOARD_SECRET) return false; // ohne beides kein Login
   if (input.length !== pw.length) return false;
   let diff = 0;
   for (let i = 0; i < input.length; i++)

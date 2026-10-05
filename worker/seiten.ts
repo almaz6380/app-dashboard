@@ -9,19 +9,19 @@ const CSS = `
 *{box-sizing:border-box}html{color-scheme:dark;overscroll-behavior-y:contain}
 body{margin:0;min-height:100dvh;background:#0a0a0a;color:#f5f5f5;font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 main{max-width:56rem;margin:0 auto;padding:16px}@media(min-width:640px){main{padding:32px}}
-h1{font-size:1.25rem;margin:0}.leise{color:#a3a3a3;font-size:.875rem;margin:0}.fein{color:#737373;font-size:.75rem}
+h1{font-size:1.25rem;margin:0}.leise{color:#a3a3a3;font-size:.875rem;margin:0}.fein{color:#909090;font-size:.75rem}
 header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;gap:12px}
 button{background:none;border:1px solid #262626;border-radius:8px;color:#a3a3a3;padding:6px 12px;font:inherit;font-size:.875rem;cursor:pointer}
 button:hover{color:#f5f5f5}.kacheln{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:24px}
 .kachel,.karte{border:1px solid #262626;background:#171717;border-radius:16px;padding:16px}
-.etikett{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:#737373}
+.etikett{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:#909090}
 .gross{font-size:1.5rem;font-weight:700;font-variant-numeric:tabular-nums;margin-top:4px}
 ul{list-style:none;margin:0;padding:0;display:grid;gap:12px}dl{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 0;text-align:center}
 dl div{background:#0a0a0a;border-radius:12px;padding:8px}dd{margin:2px 0 0}
-.ok{font-weight:600;font-variant-numeric:tabular-nums}.aus{color:#737373;font-size:.875rem}.fehler{color:#f87171;font-size:.875rem}
+.ok{font-weight:600;font-variant-numeric:tabular-nums}.aus{color:#909090;font-size:.875rem}.fehler{color:#f87171;font-size:.875rem}
 .neu{margin-left:4px;font-size:.625rem;text-transform:uppercase;letter-spacing:.05em;color:#f59e0b}
 table{display:none;width:100%;border-collapse:collapse;border:1px solid #262626;border-radius:16px;overflow:hidden}
-th{background:#171717;color:#737373;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:12px 16px}
+th{background:#171717;color:#909090;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:12px 16px}
 td{padding:14px 16px;border-top:1px solid #262626}th:not(:first-child),td:not(:first-child){text-align:right}
 @media(min-width:640px){table{display:table}ul.karten{display:none}}
 .warn{color:#fbbf24;font-size:.75rem;margin-top:16px}

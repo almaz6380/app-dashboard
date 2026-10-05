@@ -18,3 +18,9 @@ crons = ["*/10 * * * *"]
 
 [observability]
 enabled = true
+
+# Login-Bremse gegen Passwort-Raten: 5 Versuche je Minute und IP (worker/index.ts).
+[[ratelimits]]
+name = "LOGIN_LIMIT"
+namespace_id = "1001"
+simple = { limit = 5, period = 60 }
