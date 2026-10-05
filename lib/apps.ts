@@ -75,9 +75,31 @@ export const APPS: AppDef[] = [
     id: "doppeldeutsch",
     name: "Watten & Schnapsen",
     hasMembers: false,
-    // Apple-ID noch offen. Liegt die App auch im App Store, taucht sie
-    // vorerst als eigene, automatisch gefundene Zeile auf.
-    stores: ["android"],
+    stores: ["ios", "android"],
+    appleAppId: "6800774882",
     androidPackage: "at.doppeldeutsch.karten",
+  },
+  // Nur im App Store (Stand 05.10.2026 kein Play-Bericht). Gefunden per
+  // Diagnose "Apps im Konto" (scripts/apple-instanzen.mjs).
+  {
+    id: "loonpop",
+    name: "LoonPop",
+    hasMembers: false,
+    stores: ["ios"],
+    appleAppId: "6818854983",
+  },
+  {
+    id: "fixthemix",
+    name: "FixTheMix",
+    hasMembers: false,
+    stores: ["ios"],
+    appleAppId: "6818787934",
+  },
+  {
+    id: "weltgeschichte",
+    name: "Weltgeschichte",
+    hasMembers: false,
+    stores: ["ios"],
+    appleAppId: "6811862606",
   },
 ];
