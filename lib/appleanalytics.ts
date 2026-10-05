@@ -167,16 +167,20 @@ export async function leseBerichte(
   }));
 }
 
+// granularitaet null = alle (DAILY, WEEKLY, MONTHLY). Kleine Apps bekommen von
+// Apple oft nur Wochen- und Monatsberichte, weil Tageswerte unter der
+// Datenschutzschwelle liegen.
 export async function leseInstanzen(
   jwt: string,
   berichtId: string,
+  granularitaet: string | null = "DAILY",
 ): Promise<Instanz[] | { fehler: string }> {
   // Hoechstens 200 je Seite; ein Snapshot mit der ganzen Historie hat mehr.
   const liste: Instanz[] = [];
   let pfad: string | undefined =
     `/analyticsReports/${encodeURIComponent(berichtId)}/instances` +
-    `?filter[granularity]=DAILY` +
-    `&fields[analyticsReportInstances]=granularity,processingDate&limit=200`;
+    `?fields[analyticsReportInstances]=granularity,processingDate&limit=200` +
+    (granularitaet ? `&filter[granularity]=${granularitaet}` : "");
   for (let seite = 0; pfad && seite < 10; seite++) {
     const r: Seite<{ granularity?: string; processingDate?: string }> = await get(jwt, pfad);
     if ("fehler" in r) return r;

@@ -1,7 +1,7 @@
 // Reine Logik aus worker/sammeln.ts, ohne Netz. Ausfuehren: npm run test:worker
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { playAuswahl, playJePaket, appleAuftraege, appleAuswahl, uebersicht, leererZustand, loeschungenAus, loeschungenMerken, iosAktuell, leereAnalytik } from "./sammeln";
+import { playAuswahl, playJePaket, appleAuftraege, appleAuswahl, uebersicht, leererZustand, loeschungenAus, loeschungenMerken, loeschungenSumme, iosAktuell, leereAnalytik } from "./sammeln";
 
 const datei = (paket: string, monat: string) => `stats/installs/installs_${paket}_${monat}_overview.csv`;
 const JETZT = Date.UTC(2026, 8, 30, 12); // 30.09.2026
@@ -60,7 +60,7 @@ const TSV = [
 ].join("\n");
 
 test("loeschungenAus: nur Delete-Zeilen, je App und Tag summiert", () => {
-  assert.deepEqual(loeschungenAus(TSV, "x"), { "6787695557": { "2026-09-28": 3, "2026-09-29": 3 } });
+  assert.deepEqual(loeschungenAus(TSV, "x"), { "6787695557": { "DAILY:2026-09-28": 3, "DAILY:2026-09-29": 3 } });
   assert.throws(() => loeschungenAus("A\tB\n1\t2", "x"), /Spalten unbekannt/);
 });
 
@@ -68,7 +68,7 @@ test("loeschungenMerken: gleicher Tag aus Snapshot und laufender Anforderung zae
   const a = leereAnalytik();
   loeschungenMerken(a, loeschungenAus(TSV, "x"));
   loeschungenMerken(a, loeschungenAus(TSV, "x"));
-  assert.deepEqual(a.loeschungen["6787695557"], { "2026-09-28": 3, "2026-09-29": 3 });
+  assert.deepEqual(a.loeschungen["6787695557"], { "DAILY:2026-09-28": 3, "DAILY:2026-09-29": 3 });
 });
 
 test("iosAktuell: Erst-Downloads minus Loeschungen, erst wenn alles geladen ist", () => {
@@ -89,4 +89,12 @@ test("iosAktuell: Erst-Downloads minus Loeschungen, erst wenn alles geladen ist"
   // Ein fehlender Sales-Bericht -> noch keine Zahl statt einer zu niedrigen.
   delete z.apple[auftraege[0]];
   assert.equal(iosAktuell(z, app, 2026, JETZT).detail, "lädt");
+});
+
+test("loeschungenSumme: Monat vor Woche vor Tag, nichts doppelt (echte Mahjong-Daten vom 05.10.)", () => {
+  // Snapshot: Monate Aug + Sep, Wochen 10.08., 31.08., 21.09. - alle von Monaten abgedeckt.
+  const tage = { "MONTHLY:2026-08-01": 7, "MONTHLY:2026-09-01": 5, "WEEKLY:2026-08-10": 2, "WEEKLY:2026-08-31": 2, "WEEKLY:2026-09-21": 3 };
+  assert.equal(loeschungenSumme(tage), 12);
+  // Oktober hat noch keinen Monat: Woche zaehlt, Tag in der Woche nicht, Tag danach schon.
+  assert.equal(loeschungenSumme({ ...tage, "WEEKLY:2026-10-05": 2, "DAILY:2026-10-06": 1, "DAILY:2026-10-13": 4 }), 18);
 });

@@ -44,13 +44,14 @@ type PlayDatei = { installs: number | null; deinst: number | null; aktiv: number
 type AppleBericht = { units?: Record<string, number>; titel?: Record<string, string>; fehlt?: boolean; geholt: number };
 
 // Apple Analytics, nur fuer die Loeschungen. Kette: Anforderung -> Bericht
-// "App Store Installation and Deletion Standard" -> Tagesinstanzen -> Segmente.
+// "App Store Installation and Deletion Standard" -> Instanzen (Tag/Woche/Monat) -> Segmente.
 export type Analytik = {
   anfragen: Record<string, { ids: string[]; geholt: number; fehler?: string }>; // Apple-ID -> Anforderungen
   berichte: Record<string, { app: string; id: string | null; geholt: number }>; // Anforderung -> Bericht
-  instanzen: Record<string, { app: string; ids: string[]; geholt: number }>; // Bericht -> Tagesinstanzen
+  // Bericht -> Instanzen; gran: Instanz -> DAILY/WEEKLY/MONTHLY (fehlt bei alten Zustaenden)
+  instanzen: Record<string, { app: string; ids: string[]; geholt: number; gran?: Record<string, string> }>;
   erledigt: Record<string, number>; // Instanz -> wann ausgewertet
-  loeschungen: Record<string, Record<string, number>>; // Apple-ID -> Datum -> Loeschungen
+  loeschungen: Record<string, Record<string, number>>; // Apple-ID -> "MONTHLY:2026-09-01" -> Loeschungen
 };
 
 export const leereAnalytik = (): Analytik => ({ anfragen: {}, berichte: {}, instanzen: {}, erledigt: {}, loeschungen: {} });
@@ -229,8 +230,9 @@ async function appleBericht(cfg: AppleConfig, jwt: string, schluessel: string): 
 
 const BERICHT_LOESCHUNGEN = /installation and deletion standard/i;
 
-// Loeschungen je Apple-ID und Datum aus einer Segment-TSV.
-export function loeschungenAus(tsv: string, app: string): Record<string, Record<string, number>> {
+// Loeschungen je Apple-ID und Zeitraum aus einer Segment-TSV. "Date" ist der Beginn
+// des Zeitraums (Tag, Wochen-Montag oder Monatserster), darum mit Granularitaet.
+export function loeschungenAus(tsv: string, app: string, gran = "DAILY"): Record<string, Record<string, number>> {
   const zeilen = tsv.split(/\r?\n/).filter((l) => l.trim().length > 0);
   const out: Record<string, Record<string, number>> = {};
   if (zeilen.length < 2) return out;
@@ -244,7 +246,7 @@ export function loeschungenAus(tsv: string, app: string): Record<string, Record<
     const n = Number((f[iAnzahl] ?? "").trim().replace(/,/g, ""));
     if (!Number.isFinite(n)) continue;
     const id = (iApp >= 0 && f[iApp]?.trim()) || app;
-    const datum = (f[iDatum] ?? "").trim();
+    const datum = `${gran}:${(f[iDatum] ?? "").trim()}`;
     (out[id] ??= {})[datum] = (out[id][datum] ?? 0) + n;
   }
   return out;
@@ -259,7 +261,19 @@ export function loeschungenMerken(a: Analytik, neu: Record<string, Record<string
   }
 }
 
-// Noch nicht ausgewertete Tagesinstanzen einer App.
+// Summe ohne Doppelzaehlung: Monate zaehlen voll; Wochen nur, wenn ihr Monat keinen
+// Monatsbericht hat; Tage nur, wenn weder ihr Monat noch eine gezaehlte Woche sie abdeckt.
+// (Apple laesst in Wochen/Tagen Kleinstwerte weg - der Monat ist am vollstaendigsten.)
+export function loeschungenSumme(tage: Record<string, number>): number {
+  const eintraege = Object.entries(tage).map(([k, n]) => ({ g: k.split(":")[0], d: k.slice(k.indexOf(":") + 1), n }));
+  const monate = new Set(eintraege.filter((e) => e.g === "MONTHLY").map((e) => e.d.slice(0, 7)));
+  const wochen = eintraege.filter((e) => e.g === "WEEKLY" && !monate.has(e.d.slice(0, 7)));
+  const inWoche = (d: string) => wochen.some((w) => { const t = (Date.parse(d) - Date.parse(w.d)) / 86400000; return t >= 0 && t < 7; });
+  const tage2 = eintraege.filter((e) => e.g === "DAILY" && !monate.has(e.d.slice(0, 7)) && !inWoche(e.d));
+  return [...eintraege.filter((e) => e.g === "MONTHLY"), ...wochen, ...tage2].reduce((s, e) => s + e.n, 0);
+}
+
+// Noch nicht ausgewertete Instanzen einer App.
 export function offeneInstanzen(a: Analytik, app: string): string[] {
   return Object.values(a.instanzen).filter((i) => i.app === app).flatMap((i) => i.ids.filter((id) => !a.erledigt[id]));
 }
@@ -311,15 +325,16 @@ async function analytikSchritt(z: Zustand, cfg: AppleConfig, jetzt: number): Pro
     }
   }
 
-  // 3. Tagesinstanzen je Bericht (alle 6 h, die laufende Anforderung waechst taeglich).
+  // 3. Instanzen je Bericht, alle Granularitaeten (alle 6 h, die laufende Anforderung
+  //    waechst). Eintraege ohne gran stammen vom alten Nur-Tages-Abruf: sofort neu holen.
   for (const { app, id } of Object.values(a.berichte)) {
     if (!id || budget <= 0) continue;
     const alt = a.instanzen[id];
-    if (alt && jetzt - alt.geholt < INSTANZEN_NOCHMAL_MS) continue;
+    if (alt?.gran && jetzt - alt.geholt < INSTANZEN_NOCHMAL_MS) continue;
     budget--;
-    const liste = await leseInstanzen(await token(), id);
+    const liste = await leseInstanzen(await token(), id, null);
     if ("fehler" in liste) { z.fehler[`apple-instanzen ${app}`] = liste.fehler; continue; }
-    a.instanzen[id] = { app, ids: liste.map((x) => x.id), geholt: jetzt };
+    a.instanzen[id] = { app, ids: liste.map((x) => x.id), geholt: jetzt, gran: Object.fromEntries(liste.map((x) => [x.id, x.granularity])) };
   }
 
   // 4. Offene Instanzen auswerten. Fertige aendern sich nie mehr.
@@ -335,7 +350,8 @@ async function analytikSchritt(z: Zustand, cfg: AppleConfig, jetzt: number): Pro
         budget--;
         const daten = await ladeSegment(s.url);
         if ("fehler" in daten) { z.fehler[`apple-segment ${app}`] = daten.fehler; ok = false; break; }
-        loeschungenMerken(a, loeschungenAus(daten.tsv, app));
+        const gran = Object.values(a.instanzen).find((i) => i.gran?.[instanz])?.gran?.[instanz] ?? "DAILY";
+        loeschungenMerken(a, loeschungenAus(daten.tsv, app, gran));
       }
       if (ok) a.erledigt[instanz] = jetzt;
     }
@@ -352,7 +368,7 @@ export function iosAktuell(z: Zustand, app: string, startJahr: number, jetzt: nu
   // die Erst-Downloads zeigen - klar als "Downloads" beschriftet - als gar nichts.
   const hatBericht = Object.values(a.instanzen).some((i) => i.app === app && i.ids.length > 0);
   if (!hatBericht || offeneInstanzen(a, app).length) return { value: downloads, status: "ok", detail: "Downloads" };
-  const weg = Object.values(a.loeschungen[app] ?? {}).reduce((s, n) => s + n, 0);
+  const weg = loeschungenSumme(a.loeschungen[app] ?? {});
   return { value: Math.max(0, downloads - weg), status: "ok", detail: "ca." };
 }
 

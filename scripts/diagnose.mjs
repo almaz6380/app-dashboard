@@ -19,7 +19,7 @@ console.log(`\nApple Analytics:`);
 for (const [app, x] of Object.entries(a.anfragen ?? {})) console.log(`  App ${app}: ${x.ids.length} Anforderungen, geholt ${zeit(x.geholt)}${x.fehler ? `, FEHLER ${x.fehler}` : ""}`);
 for (const [anf, b] of Object.entries(a.berichte ?? {})) console.log(`  Anforderung ${anf} (App ${b.app}): Bericht ${b.id ?? "noch keiner"}`);
 for (const [ber, i] of Object.entries(a.instanzen ?? {})) console.log(`  Bericht ${ber} (App ${i.app}): ${i.ids.length} Instanzen, ${i.ids.filter((id) => a.erledigt?.[id]).length} ausgewertet`);
-for (const [app, tage] of Object.entries(a.loeschungen ?? {})) console.log(`  Loeschungen App ${app}: ${Object.values(tage).reduce((s, n) => s + n, 0)} an ${Object.keys(tage).length} Tagen`);
+for (const [app, tage] of Object.entries(a.loeschungen ?? {})) console.log(`  Loeschungen App ${app}: ${Object.entries(tage).map(([k, n]) => `${k}=${n}`).join(", ")}`);
 
 console.log(`\nGoogle Play (je Paket die letzten Monatsdateien):`);
 const jePaket = {};
