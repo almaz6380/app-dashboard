@@ -39,12 +39,19 @@ input{background:#171717;border:1px solid #262626;border-radius:8px;color:#f5f5f
 // Zwischenspeicher zurueckkommt (pageshow) oder nur den Fokus wiederbekommt (focus).
 // Bewusst von Hand geschrieben und winzig: kein Framework, nichts nachzuladen.
 const selbstAktuell = (stand: number | null) => `<script>
-(()=>{let s=${JSON.stringify(stand)},l=0;
+(()=>{let s=${JSON.stringify(stand)},t=Date.now(),l=0;
+const alt=()=>Date.now()-t>120000;
+// Zurueck im Vordergrund: ist die Seite aelter als zwei Minuten, einfach neu laden.
+// Ohne Frage an den Server, ohne Vergleich - beides kann am Handy stillstehen, und
+// dann stand hier stundenlang eine alte Zahl. Die Seite ist winzig, das kostet nichts.
+const v=()=>{if(!document.hidden&&alt())location.reload();};
+// Im Hintergrund weiterlaufen lassen: nur fragen, neu laden bei neuem Stand.
 const p=async()=>{if(document.hidden||Date.now()-l<2000)return;l=Date.now();
+if(alt()){location.reload();return;}
 try{const r=await fetch("/api/stand",{cache:"no-store"});const j=await r.json();
 if(j.stand&&j.stand!==s)location.reload();}catch(e){}};
-setInterval(p,60000);document.addEventListener("visibilitychange",p);
-for(const e of ["pageshow","focus","online"])addEventListener(e,p);})();
+setInterval(p,60000);document.addEventListener("visibilitychange",v);
+for(const e of ["pageshow","focus","online"])addEventListener(e,v);})();
 </script>`;
 
 function rahmen(titel: string, inhalt: string, stand?: number | null): string {
