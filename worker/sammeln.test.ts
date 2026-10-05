@@ -46,7 +46,7 @@ test("uebersicht: bekannte Apps mit Android-Zahl, unbekanntes Paket als neu", ()
   z.lauf = JETZT;
   const u = uebersicht(z, JETZT);
   assert.equal(u.zeilen.find((r) => r.id === "swaply")?.android.value, 31);
-  assert.equal(u.zeilen.find((r) => r.id === "loonpop")?.android.detail, "nicht im Store");
+  assert.equal(u.zeilen.find((r) => r.id === "mahjong")?.mitglieder.detail, "keine Konten");
   assert.equal(u.zeilen.find((r) => r.id === "play:com.unbekannt")?.neu, true);
   assert.equal(u.unvollstaendig, false);
 });

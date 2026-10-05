@@ -79,27 +79,32 @@ export const APPS: AppDef[] = [
     appleAppId: "6800774882",
     androidPackage: "at.doppeldeutsch.karten",
   },
-  // Nur im App Store (Stand 05.10.2026 kein Play-Bericht). Gefunden per
-  // Diagnose "Apps im Konto" (scripts/apple-instanzen.mjs).
+  // Gefunden per Diagnose "Apps im Konto" (scripts/apple-instanzen.mjs), Pakete
+  // laut Play Console. Stand 05.10.2026 noch ohne Play-Bericht (LoonPop/FixTheMix
+  // im internen Test, Weltgeschichte frisch in Produktion) -> Android "einrichten",
+  // bis Google den ersten Monatsbericht ablegt.
   {
     id: "loonpop",
     name: "LoonPop",
     hasMembers: false,
-    stores: ["ios"],
+    stores: ["ios", "android"],
     appleAppId: "6818854983",
+    androidPackage: "at.gallab.loonpop",
   },
   {
     id: "fixthemix",
     name: "FixTheMix",
     hasMembers: false,
-    stores: ["ios"],
+    stores: ["ios", "android"],
     appleAppId: "6818787934",
+    androidPackage: "at.gallab.fixthemix",
   },
   {
     id: "weltgeschichte",
     name: "Weltgeschichte",
     hasMembers: false,
-    stores: ["ios"],
+    stores: ["ios", "android"],
     appleAppId: "6811862606",
+    androidPackage: "de.almaz.weltgeschichte",
   },
 ];
