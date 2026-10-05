@@ -22,14 +22,18 @@ const API = "https://api.appstoreconnect.apple.com/v1";
 
 type JsonApi<A> = {
   data?: { id: string; type: string; attributes?: A }[];
+  links?: { next?: string };
   errors?: { title?: string; detail?: string; status?: string }[];
 };
 
+type Seite<A> = { data: { id: string; attributes?: A }[]; next?: string } | { fehler: string };
+
+// pfad darf auch eine volle URL sein (links.next der Vorseite).
 async function get<A>(
   jwt: string,
   pfad: string,
-): Promise<{ data: { id: string; attributes?: A }[] } | { fehler: string }> {
-  const res = await fetch(`${API}${pfad}`, {
+): Promise<Seite<A>> {
+  const res = await fetch(pfad.startsWith("https://") ? pfad : `${API}${pfad}`, {
     headers: { Authorization: `Bearer ${jwt}` },
     cache: "no-store",
   });
@@ -49,7 +53,7 @@ async function get<A>(
   }
   try {
     const j = JSON.parse(text) as JsonApi<A>;
-    return { data: j.data ?? [] };
+    return { data: j.data ?? [], next: j.links?.next };
   } catch {
     return { fehler: "Antwort war kein JSON" };
   }
@@ -163,22 +167,31 @@ export async function leseBerichte(
   }));
 }
 
+// granularitaet null = alle (DAILY, WEEKLY, MONTHLY). Kleine Apps bekommen von
+// Apple oft nur Wochen- und Monatsberichte, weil Tageswerte unter der
+// Datenschutzschwelle liegen.
 export async function leseInstanzen(
   jwt: string,
   berichtId: string,
+  granularitaet: string | null = "DAILY",
 ): Promise<Instanz[] | { fehler: string }> {
-  const r = await get<{ granularity?: string; processingDate?: string }>(
-    jwt,
+  // Hoechstens 200 je Seite; ein Snapshot mit der ganzen Historie hat mehr.
+  const liste: Instanz[] = [];
+  let pfad: string | undefined =
     `/analyticsReports/${encodeURIComponent(berichtId)}/instances` +
-      `?filter[granularity]=DAILY` +
-      `&fields[analyticsReportInstances]=granularity,processingDate&limit=200`,
-  );
-  if ("fehler" in r) return r;
-  const liste = r.data.map((d) => ({
-    id: d.id,
-    granularity: d.attributes?.granularity ?? "?",
-    processingDate: d.attributes?.processingDate ?? "?",
-  }));
+    `?fields[analyticsReportInstances]=granularity,processingDate&limit=200` +
+    (granularitaet ? `&filter[granularity]=${granularitaet}` : "");
+  for (let seite = 0; pfad && seite < 10; seite++) {
+    const r: Seite<{ granularity?: string; processingDate?: string }> = await get(jwt, pfad);
+    if ("fehler" in r) return r;
+    for (const d of r.data)
+      liste.push({
+        id: d.id,
+        granularity: d.attributes?.granularity ?? "?",
+        processingDate: d.attributes?.processingDate ?? "?",
+      });
+    pfad = r.next;
+  }
   liste.sort((a, b) => a.processingDate.localeCompare(b.processingDate));
   return liste;
 }

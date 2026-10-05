@@ -8,7 +8,8 @@
 // einmal geholt. Warten auf das Netz zaehlt nicht zur CPU-Zeit, Entpacken schon.
 import { importPKCS8, SignJWT } from "jose";
 import { APPS, AppDef } from "../lib/apps";
-import { readConfig as appleConfig, makeJwt, sumReport, AppleConfig } from "../lib/appstore";
+import { readConfig as appleConfig, readAdminConfig, makeJwt, sumReport, AppleConfig } from "../lib/appstore";
+import { leseAnfragen, fordereAn, leseBerichte, leseInstanzen, leseSegmente, ladeSegment } from "../lib/appleanalytics";
 import { sumSpalte, letzterWert, SPALTE_INSTALLS, SPALTE_DEINSTALLS, SPALTE_AKTIV } from "../lib/googleplay";
 
 // Je Lauf hoechstens so viele Downloads. Eine Play-Monatsdatei hat rund 30 Zeilen,
@@ -20,6 +21,11 @@ const MAX_APPLE = 2;
 const PLAY_AKTUALISIEREN_MS = 3 * 60 * 60 * 1000;
 // Ein fehlender Apple-Bericht (404) ist meist nur noch nicht erschienen.
 const APPLE_NOCHMAL_MS = 6 * 60 * 60 * 1000;
+// Apple Analytics: hoechstens so viele Anfragen je Lauf (Workers Free: 50 je Aufruf).
+const MAX_ANALYTIK = 12;
+const ANFRAGEN_NOCHMAL_MS = 24 * 60 * 60 * 1000;
+const INSTANZEN_NOCHMAL_MS = 6 * 60 * 60 * 1000;
+const FEHLER_NOCHMAL_MS = 30 * 60 * 1000;
 
 export type Metric = { value: number | null; status: "ok" | "not-configured" | "error"; detail?: string };
 
@@ -37,16 +43,30 @@ export type Uebersicht = { zeilen: Zeile[]; stand: number | null; unvollstaendig
 type PlayDatei = { installs: number | null; deinst: number | null; aktiv: number | null; geholt: number };
 type AppleBericht = { units?: Record<string, number>; titel?: Record<string, string>; fehlt?: boolean; geholt: number };
 
+// Apple Analytics, nur fuer die Loeschungen. Kette: Anforderung -> Bericht
+// "App Store Installation and Deletion Standard" -> Instanzen (Tag/Woche/Monat) -> Segmente.
+export type Analytik = {
+  anfragen: Record<string, { ids: string[]; geholt: number; fehler?: string }>; // Apple-ID -> Anforderungen
+  berichte: Record<string, { app: string; id: string | null; geholt: number }>; // Anforderung -> Bericht
+  // Bericht -> Instanzen; gran: Instanz -> DAILY/WEEKLY/MONTHLY (fehlt bei alten Zustaenden)
+  instanzen: Record<string, { app: string; ids: string[]; geholt: number; gran?: Record<string, string> }>;
+  erledigt: Record<string, number>; // Instanz -> wann ausgewertet
+  loeschungen: Record<string, Record<string, number>>; // Apple-ID -> "MONTHLY:2026-09-01" -> Loeschungen
+};
+
+export const leereAnalytik = (): Analytik => ({ anfragen: {}, berichte: {}, instanzen: {}, erledigt: {}, loeschungen: {} });
+
 export type Zustand = {
   play: Record<string, PlayDatei>; // Schluessel: Dateiname im Bucket
   playDateien: string[]; // zuletzt gesehene Liste, chronologisch je Paket
   apple: Record<string, AppleBericht>; // Schluessel: "DAILY:2026-09-28"
+  analytik?: Analytik; // fehlt in Zustaenden von vor dem 02.10.2026
   mitglieder: Record<string, Metric>;
   fehler: Record<string, string>;
   lauf: number;
 };
 
-export const leererZustand = (): Zustand => ({ play: {}, playDateien: [], apple: {}, mitglieder: {}, fehler: {}, lauf: 0 });
+export const leererZustand = (): Zustand => ({ play: {}, playDateien: [], apple: {}, analytik: leereAnalytik(), mitglieder: {}, fehler: {}, lauf: 0 });
 
 const DATEINAME = /^stats\/installs\/installs_(.+)_(\d{6})_overview\.csv$/;
 const NICHT_EINGERICHTET: Metric = { value: null, status: "not-configured" };
@@ -201,6 +221,157 @@ async function appleBericht(cfg: AppleConfig, jwt: string, schluessel: string): 
   return { units: Object.fromEntries(units), titel: Object.fromEntries(titel), geholt: Date.now() };
 }
 
+// ---- Apple Analytics: Loeschungen -------------------------------------------------
+//
+// Apple kennt keine Zahl "aktuell installierte Geraete". Annaeherung (Entscheidung
+// vom 02.10.2026): Erst-Downloads aus den Sales-Berichten minus Loeschungen aus der
+// Analytics Reports API. Loeschungen meldet Apple nur von Nutzern mit Analyse-
+// Freigabe - die Zahl liegt darum eher etwas zu hoch und wird als "ca." gezeigt.
+
+const BERICHT_LOESCHUNGEN = /installation and deletion standard/i;
+
+// Loeschungen je Apple-ID und Zeitraum aus einer Segment-TSV. "Date" ist der Beginn
+// des Zeitraums (Tag, Wochen-Montag oder Monatserster), darum mit Granularitaet.
+export function loeschungenAus(tsv: string, app: string, gran = "DAILY"): Record<string, Record<string, number>> {
+  const zeilen = tsv.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const out: Record<string, Record<string, number>> = {};
+  if (zeilen.length < 2) return out;
+  const kopf = zeilen[0].split("\t").map((h) => h.trim());
+  const iEvent = kopf.indexOf("Event"), iAnzahl = kopf.indexOf("Counts");
+  const iDatum = kopf.indexOf("Date"), iApp = kopf.indexOf("App Apple Identifier");
+  if (iEvent < 0 || iAnzahl < 0 || iDatum < 0) throw new Error(`Apple-Loeschungen: Spalten unbekannt (${kopf.slice(0, 8).join(", ")})`);
+  for (let r = 1; r < zeilen.length; r++) {
+    const f = zeilen[r].split("\t");
+    if ((f[iEvent] ?? "").trim().toLowerCase() !== "delete") continue;
+    const n = Number((f[iAnzahl] ?? "").trim().replace(/,/g, ""));
+    if (!Number.isFinite(n)) continue;
+    const id = (iApp >= 0 && f[iApp]?.trim()) || app;
+    const datum = `${gran}:${(f[iDatum] ?? "").trim()}`;
+    (out[id] ??= {})[datum] = (out[id][datum] ?? 0) + n;
+  }
+  return out;
+}
+
+// Laufende Anforderung und Snapshot koennen dieselben Tage liefern. Je Tag den
+// groesseren Wert behalten statt zu addieren - sonst zaehlten sie doppelt.
+export function loeschungenMerken(a: Analytik, neu: Record<string, Record<string, number>>): void {
+  for (const [id, tage] of Object.entries(neu)) {
+    const ziel = (a.loeschungen[id] ??= {});
+    for (const [datum, n] of Object.entries(tage)) ziel[datum] = Math.max(ziel[datum] ?? 0, n);
+  }
+}
+
+// Summe ohne Doppelzaehlung: Monate zaehlen voll; Wochen nur, wenn ihr Monat keinen
+// Monatsbericht hat; Tage nur, wenn weder ihr Monat noch eine gezaehlte Woche sie abdeckt.
+// (Apple laesst in Wochen/Tagen Kleinstwerte weg - der Monat ist am vollstaendigsten.)
+export function loeschungenSumme(tage: Record<string, number>): number {
+  const eintraege = Object.entries(tage).map(([k, n]) => ({ g: k.split(":")[0], d: k.slice(k.indexOf(":") + 1), n }));
+  const monate = new Set(eintraege.filter((e) => e.g === "MONTHLY").map((e) => e.d.slice(0, 7)));
+  const wochen = eintraege.filter((e) => e.g === "WEEKLY" && !monate.has(e.d.slice(0, 7)));
+  const inWoche = (d: string) => wochen.some((w) => { const t = (Date.parse(d) - Date.parse(w.d)) / 86400000; return t >= 0 && t < 7; });
+  const tage2 = eintraege.filter((e) => e.g === "DAILY" && !monate.has(e.d.slice(0, 7)) && !inWoche(e.d));
+  return [...eintraege.filter((e) => e.g === "MONTHLY"), ...wochen, ...tage2].reduce((s, e) => s + e.n, 0);
+}
+
+// Noch nicht ausgewertete Instanzen einer App.
+export function offeneInstanzen(a: Analytik, app: string): string[] {
+  return Object.values(a.instanzen).filter((i) => i.app === app).flatMap((i) => i.ids.filter((id) => !a.erledigt[id]));
+}
+
+async function analytikSchritt(z: Zustand, cfg: AppleConfig, jetzt: number): Promise<void> {
+  const a = (z.analytik ??= leereAnalytik());
+  let budget = MAX_ANALYTIK;
+  let jwt: string | undefined;
+  const token = async () => (jwt ??= await makeJwt(cfg));
+  const apps = APPS.filter((x) => x.appleAppId).map((x) => x.appleAppId!);
+
+  // 1. Anforderungen je App (taeglich nachsehen). Fehlt eine, mit dem Admin-
+  //    Schluessel anfordern: laufend fuer neue Tage, Snapshot fuer die Historie.
+  for (const app of apps) {
+    if (budget <= 0) return;
+    const alt = a.anfragen[app];
+    // Nach einem Fehler (z. B. Vereinbarung fehlte) schon nach 30 Minuten wieder versuchen.
+    if (alt && jetzt - alt.geholt < (alt.fehler ? FEHLER_NOCHMAL_MS : ANFRAGEN_NOCHMAL_MS)) continue;
+    budget--;
+    const liste = await leseAnfragen(await token(), app);
+    // Fehler merken und erst morgen wieder versuchen - nicht jeden Lauf.
+    if ("fehler" in liste) { a.anfragen[app] = { ids: alt?.ids ?? [], geholt: jetzt, fehler: liste.fehler }; continue; }
+    const eintrag: Analytik["anfragen"][string] = { ids: liste.map((x) => x.id), geholt: jetzt };
+    a.anfragen[app] = eintrag;
+    const fehlend = (["ONGOING", "ONE_TIME_SNAPSHOT"] as const).filter((t) => !liste.some((x) => x.accessType === t));
+    if (!fehlend.length) continue;
+    // Anfordern braucht die Admin-Rolle. Ohne eigenen Admin-Schluessel den normalen
+    // versuchen - hat er die Rolle, reicht ein einziger Schluessel; sonst 403 im Hinweis.
+    const adminJwt = await makeJwt(readAdminConfig() ?? cfg);
+    for (const typ of fehlend) {
+      budget--;
+      const r = await fordereAn(adminJwt, app, typ);
+      if ("fehler" in r) eintrag.fehler = `Anfordern: ${r.fehler}`;
+      else eintrag.geholt = 0; // naechster Lauf liest die neue Anforderung
+    }
+  }
+
+  // 2. Je Anforderung den Bericht mit den Loeschungen suchen. Apple legt ihn erst
+  //    nach 1-2 Tagen an - bis dahin alle 6 h nachsehen.
+  for (const [app, { ids }] of Object.entries(a.anfragen)) {
+    for (const anfrage of ids) {
+      if (budget <= 0) return;
+      const b = a.berichte[anfrage];
+      if (b && (b.id || jetzt - b.geholt < INSTANZEN_NOCHMAL_MS)) continue;
+      budget--;
+      const berichte = await leseBerichte(await token(), anfrage);
+      if ("fehler" in berichte) { z.fehler[`apple-bericht ${app}`] = berichte.fehler; continue; }
+      a.berichte[anfrage] = { app, id: berichte.find((x) => BERICHT_LOESCHUNGEN.test(x.name))?.id ?? null, geholt: jetzt };
+    }
+  }
+
+  // 3. Instanzen je Bericht, alle Granularitaeten (alle 6 h, die laufende Anforderung
+  //    waechst). Eintraege ohne gran stammen vom alten Nur-Tages-Abruf: sofort neu holen.
+  for (const { app, id } of Object.values(a.berichte)) {
+    if (!id || budget <= 0) continue;
+    const alt = a.instanzen[id];
+    if (alt?.gran && jetzt - alt.geholt < INSTANZEN_NOCHMAL_MS) continue;
+    budget--;
+    const liste = await leseInstanzen(await token(), id, null);
+    if ("fehler" in liste) { z.fehler[`apple-instanzen ${app}`] = liste.fehler; continue; }
+    a.instanzen[id] = { app, ids: liste.map((x) => x.id), geholt: jetzt, gran: Object.fromEntries(liste.map((x) => [x.id, x.granularity])) };
+  }
+
+  // 4. Offene Instanzen auswerten. Fertige aendern sich nie mehr.
+  for (const app of apps) {
+    for (const instanz of offeneInstanzen(a, app)) {
+      if (budget < 2) return;
+      budget--;
+      const segmente = await leseSegmente(await token(), instanz);
+      if ("fehler" in segmente) { z.fehler[`apple-segmente ${app}`] = segmente.fehler; continue; }
+      let ok = true;
+      for (const s of segmente) {
+        if (!s.url) continue;
+        budget--;
+        const daten = await ladeSegment(s.url);
+        if ("fehler" in daten) { z.fehler[`apple-segment ${app}`] = daten.fehler; ok = false; break; }
+        const gran = Object.values(a.instanzen).find((i) => i.gran?.[instanz])?.gran?.[instanz] ?? "DAILY";
+        loeschungenMerken(a, loeschungenAus(daten.tsv, app, gran));
+      }
+      if (ok) a.erledigt[instanz] = jetzt;
+    }
+  }
+}
+
+// iOS-Zelle: Erst-Downloads minus Loeschungen, sobald beides vollstaendig da ist.
+export function iosAktuell(z: Zustand, app: string, startJahr: number, jetzt: number): Metric {
+  const auftraege = appleAuftraege(startJahr, jetzt, z.apple);
+  if (auftraege.some((k) => !z.apple[k])) return { value: null, status: "not-configured", detail: "lädt" };
+  const a = z.analytik ?? leereAnalytik();
+  const downloads = auftraege.reduce((s, k) => s + (z.apple[k]?.units?.[app] ?? 0), 0);
+  // Bis Apple die Loeschungen liefert (Analytics-Berichte, kann Tage dauern), lieber
+  // die Erst-Downloads zeigen - klar als "Downloads" beschriftet - als gar nichts.
+  const hatBericht = Object.values(a.instanzen).some((i) => i.app === app && i.ids.length > 0);
+  if (!hatBericht || offeneInstanzen(a, app).length) return { value: downloads, status: "ok", detail: "Downloads" };
+  const weg = loeschungenSumme(a.loeschungen[app] ?? {});
+  return { value: Math.max(0, downloads - weg), status: "ok", detail: "ca." };
+}
+
 // ---- Mitglieder (Supabase) ------------------------------------------------------
 
 async function mitglieder(app: AppDef): Promise<Metric> {
@@ -260,6 +431,8 @@ export async function einLauf(z: Zustand, jetzt = Date.now()): Promise<Zustand> 
     } catch (e) {
       z.fehler.apple = fehlerText(e);
     }
+    try { await analytikSchritt(z, apple, jetzt); }
+    catch (e) { z.fehler["apple-analytics"] = fehlerText(e); }
   }
 
   for (const app of APPS) if (app.hasMembers) z.mitglieder[app.id] = await mitglieder(app);
@@ -280,8 +453,8 @@ export function uebersicht(z: Zustand, jetzt = Date.now()): Uebersicht {
     return {
       id: app.id,
       name: app.name,
-      // Apples Sales-Berichte kennen nur Erst-Downloads, keine aktuellen Installationen.
-      ios: app.stores.includes("ios") ? NICHT_EINGERICHTET : NICHT_IM_STORE,
+      ios: !app.stores.includes("ios") ? NICHT_IM_STORE
+        : appleKonf && app.appleAppId ? iosAktuell(z, app.appleAppId, appleKonf.startYear, jetzt) : NICHT_EINGERICHTET,
       android: !app.stores.includes("android") ? NICHT_IM_STORE : playKonfiguriert ? zahl(p?.aktiv) : NICHT_EINGERICHTET,
       mitglieder: app.hasMembers ? (z.mitglieder[app.id] ?? NICHT_EINGERICHTET) : KEINE_KONTEN,
     };
@@ -307,7 +480,10 @@ export function uebersicht(z: Zustand, jetzt = Date.now()): Uebersicht {
     }
   }
 
-  const unvollstaendig = [...jePaket.values()].some((p) => !p.vollstaendig) || Object.keys(z.fehler).length > 0;
-  const hinweise = Object.entries(z.fehler).map(([k, v]) => `${k}: ${v}`);
+  // Apple-Analytics-Probleme bleiben stehen, bis sie behoben sind (z.fehler gilt nur einen Lauf).
+  const apfel = Object.entries(z.analytik?.anfragen ?? {}).filter(([, x]) => x.fehler).map(([id, x]) => `Apple-Löschungen ${id}: ${x.fehler}`);
+  const unvollstaendig = [...jePaket.values()].some((p) => !p.vollstaendig) || Object.keys(z.fehler).length > 0 || apfel.length > 0;
+  // Gleiche Meldung fuer mehrere Apps nur einmal zeigen.
+  const hinweise = [...new Set([...apfel.map((h) => h.replace(/^Apple-Löschungen \d+/, "Apple")), ...Object.entries(z.fehler).map(([k, v]) => `${k}: ${v}`)])];
   return { zeilen, stand: z.lauf || null, unvollstaendig, hinweise };
 }
