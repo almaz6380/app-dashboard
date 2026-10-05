@@ -44,11 +44,11 @@ for (const app of apps) {
       for (const i of inst) (je[i.attributes?.granularity ?? "?"] ??= []).push(i.attributes?.processingDate ?? "?");
       if (!inst.length) console.log("    keine Instanzen (keine Granularitaet)");
       for (const [g, d] of Object.entries(je)) { d.sort(); console.log(`    ${g}: ${d.length} Instanzen, ${d[0]} bis ${d.at(-1)}`); }
-      // Neueste Instanz: Kopfzeile und Summen je Event (nur Zahlen).
-      const neu = inst.sort((x, y) => String(x.attributes?.processingDate).localeCompare(String(y.attributes?.processingDate))).at(-1);
-      if (!neu) continue;
+      // Jede Instanz: je Datum-Wert die Summen je Event (nur Zahlen) - zeigt, welche
+      // Tage Wochen- und Monatsberichte abdecken.
+      for (const neu of inst) {
       const seg = await alle(`/analyticsReportInstances/${neu.id}/segments?fields[analyticsReportSegments]=url`);
-      for (const s of seg.slice(0, 1)) {
+      for (const s of seg) {
         const buf = Buffer.from(await (await fetch(s.attributes.url)).arrayBuffer());
         const text = buf[0] === 0x1f ? gunzipSync(buf).toString("utf8") : buf.toString("utf8");
         const z = text.split(/\r?\n/).filter(Boolean);
@@ -60,7 +60,11 @@ for (const app of apps) {
           const s2 = {};
           for (const r of z.slice(1)) { const f = r.split("\t"); s2[f[ie]] = (s2[f[ie]] ?? 0) + Number(f[ic] || 0); }
           console.log(`    Summen: ${JSON.stringify(s2)}`);
+          const id = kopf.indexOf("Date"), je = {};
+          for (const r of z.slice(1)) { const f = r.split("\t"); const k = `${f[id]} ${f[ie]}`; je[k] = (je[k] ?? 0) + Number(f[ic] || 0); }
+          console.log(`    je Datum: ${Object.entries(je).sort().map(([k, n]) => `${k}=${n}`).join(", ")}`);
         }
+      }
       }
     }
   } catch (e) {
