@@ -2,39 +2,47 @@
 
 # App-Dashboard
 
-Privates Ein-Personen-Dashboard, das pro App **Downloads** und **Mitglieder** anzeigt — nur aggregierte Zahlen, keine personenbezogenen Daten. Zugriff nur per Passwort (nur der Besitzer).
+Privates Ein-Personen-Dashboard: pro App **aktuelle Installationen** (iOS, Android) und
+**Mitglieder** — nur aggregierte Zahlen, keine personenbezogenen Daten. Zugriff nur per
+Passwort (nur der Besitzer).
 
-**Seit 30.09.2026 läuft es als Cloudflare Worker** (`worker/`), nicht mehr als Next.js auf
-Vercel — Vercel hatte den ganzen Account pausiert. Adresse: `https://app-dashboard.<subdomain>.workers.dev`.
-Deploy über den Workflow „Cloudflare veroeffentlichen“ (nur von Hand, kein Git-Trigger).
-Aufbau, Grenzen und Secrets: **`docs/CLOUDFLARE.md` zuerst lesen.** Die Next.js-Dateien
-(`app/`, `proxy.ts`) bleiben als Rückweg liegen; `lib/` wird von beiden benutzt.
-
-## Stack
-Next.js 16 (App Router, Turbopack), React 19, Tailwind 4, Node ≥ 24. Deploy auf Vercel.
+**Läuft seit 30.09.2026 als Cloudflare Worker** (`worker/`), nicht mehr auf Vercel —
+Vercel hatte den ganzen Account pausiert. Adresse: `https://app-dashboard.almaz6380.workers.dev`.
+Aufbau, CPU-Grenze (10 ms je Aufruf), Secrets: **`docs/CLOUDFLARE.md` zuerst lesen.**
+Die Next.js-Dateien (`app/`, `proxy.ts`, `lib/metrics.ts`) bleiben nur als Rückweg
+liegen und laufen nirgends; `lib/` wird vom Worker mitbenutzt.
 
 ## Struktur
-- `lib/apps.ts` — zentrale App-Liste (Name, `appleAppId`, `androidPackage`, `membersEnv`). Neue App = hier eintragen.
-- `lib/metrics.ts` — führt die Quellen zusammen; `getAllMetrics()` liefert pro App `downloads` + `members`. Downloads = Apple (iOS) + Google (Android), summiert.
-- `lib/appleanalytics.ts` — Apple Analytics Reports API (Anforderung → Bericht → Instanz → Segment). Liefert perspektivisch die *aktuellen* iOS-Installationen, die die Sales-Reports nicht kennen. Diagnose unter `/diagnose/apple`.
-- `lib/appstore.ts` — Apple App Store Connect: Sales-Summary-Reports (JWT ES256 via `jose`), summiert Erst-Download-Units (Product Type „1"/„F1"; Updates/IAP ausgeschlossen) pro Apple-ID. 6h-Cache.
-- `lib/googleplay.ts` — Google Play: liest `Total User Installs` aus `stats/installs/installs_<paket>_<JJJJMM>_overview.csv` (UTF-16) im Report-Bucket (Service-Account-JWT RS256 → OAuth → Storage-JSON-API). 6h-Cache.
-- `lib/auth.ts` + `proxy.ts` — Passwort-Login. **Next 16: „middleware" heißt jetzt `proxy.ts` (Funktion `proxy`).**
-- `app/page.tsx` — Dashboard-Tabelle. `app/login` + `app/api/login|logout` — Auth.
+- `worker/index.ts` — Login, Übersicht, `/api/stand` (Seite lädt sich selbst neu), Cron alle 10 min.
+- `worker/sammeln.ts` — holt je Lauf nur wenige Berichte, speichert Zustand + fertige Übersicht in Workers KV (`DATEN`). Seitenaufrufe lesen nur KV.
+- `worker/seiten.ts` — HTML ohne Framework.
+- `lib/apps.ts` — zentrale App-Liste (Name, `appleAppId`, `androidPackage`, `membersEnv`). Neue App = hier eintragen; Apps, die nur in einer Quelle auftauchen, erscheinen als „neu“.
+- `lib/appstore.ts` — Apple Sales-Berichte (JWT ES256 via `jose`): Erst-Downloads je Apple-ID.
+- `lib/appleanalytics.ts` — Apple Analytics Reports API (Anforderung → Bericht → Instanz → Segment) für die Löschungen.
+- `lib/googleplay.ts` — Google Play: `stats/installs/…_overview.csv` (UTF-16) aus dem Report-Bucket; Android = „Active Device Installs“.
+- `lib/auth.ts` — Passwort-Login (HMAC-Cookie `dash_auth`).
 
-## Env-Variablen (in `.env.local` lokal, in Vercel prod)
-- `DASHBOARD_PASSWORD`, `DASHBOARD_SECRET` (HMAC-Cookie-Schlüssel)
-- Apple: `APPSTORE_ISSUER_ID`, `APPSTORE_KEY_ID`, `APPSTORE_PRIVATE_KEY` (.p8-Inhalt), `APPSTORE_VENDOR_NUMBER`, `APPSTORE_START_YEAR`
-- Apple Analytics (optional): `APPSTORE_ADMIN_KEY_ID`, `APPSTORE_ADMIN_PRIVATE_KEY` — **nur** zum einmaligen Anfordern der Analytics-Berichte über `/diagnose/apple`. Apple verlangt dafür die Admin-Rolle; zum Abholen genügt danach der normale Schlüssel. Issuer-ID wird geteilt.
-- Google: `GOOGLE_SERVICE_ACCOUNT_JSON` (kompletter JSON in einer Zeile), `GOOGLE_PLAY_BUCKET` (`pubsite_prod_…`, hier ohne `rev_`)
-- Mitglieder (optional, noch nicht befüllt): `WELLBOOKED_SUPABASE_URL`/`_SERVICE_KEY`, `MYPEAK_SUPABASE_URL`/`_SERVICE_KEY` → `count(*)` auf `profiles`
+## Wie die Zahlen entstehen
+- **Android** = Geräte, auf denen die App jetzt liegt (Google, hängt 2–3 Tage nach).
+- **iOS** = Erst-Downloads (Sales) minus Löschungen (Analytics-Bericht „App Store Installation and Deletion Standard“), angezeigt als „ca.“. Solange Apple für eine App keine Löschungen liefert, steht dort die Download-Zahl mit dem Zusatz „Downloads“ (zählt nicht in die Kachel „Aktuell installiert“).
+- Kleine Apps bekommen von Apple oft **nur Wochen- und Monatsberichte**, keine Tage (Datenschutzschwelle). Der Worker liest alle Granularitäten; `loeschungenSumme` verhindert Doppelzählung (Monat vor Woche vor Tag).
+- Die Analytics-Anforderungen (`ONGOING` + `ONE_TIME_SNAPSHOT`) stellt der Worker selbst, sobald ein Schlüssel mit Admin-Rolle da ist. Kein Knopf nötig.
 
-Siehe `.env.example`. **`.env.local` niemals committen** (ist ge-ignored).
+## Deploy und Diagnose (GitHub Actions, nur von Hand)
+- **„Cloudflare veroeffentlichen“** (`deploy.yml`): testet, veröffentlicht, überträgt die GitHub-Secrets zu Cloudflare. Nur nach ausdrücklichem „ja“ (siehe unten). Nach dem Deploy erscheinen neue Zahlen erst mit dem nächsten Cron-Lauf (≤ 10 min).
+- **„Diagnose“** (`diagnose.yml`): **nur lesen**, ändert nichts, braucht kein „ja“. Zeigt den Worker-Zustand aus KV, die Play-Berichte und je App, was Apple im Installationsbericht hat (`scripts/apple-instanzen.mjs`). Erste Anlaufstelle, wenn Zahlen fehlen.
+- Lokal: `npm run test:worker` (Rechenlogik ohne Netz), `npx wrangler deploy --dry-run` (baut).
+
+## Secrets
+Alle als **GitHub-Secrets** (Settings → Secrets and variables → Actions); der Deploy
+überträgt sie zu Cloudflare, leere überschreiben nichts. Vollständige Liste mit Herkunft:
+`docs/CLOUDFLARE.md`. Kurz: `CLOUDFLARE_API_TOKEN`/`_ACCOUNT_ID`, `DASHBOARD_PASSWORD`,
+`APPSTORE_*` (+ optional `APPSTORE_ADMIN_*`), `GOOGLE_SERVICE_ACCOUNT_JSON`,
+`GOOGLE_PLAY_BUCKET`, `WELLBOOKED_SUPABASE_*`, `MYPEAK_SUPABASE_*`.
 
 ## Zu beachten
-- Zahlen aktualisieren sich beim Seitenaufruf, max. alle 6h neu geladen; Store-Daten selbst hängen ~1 Tag (Apple) bzw. ~2–3 Tage (Google) hinterher.
-- Google braucht (a) Bucket-Freigabe des Service-Accounts in der Play Console (kann bis 24h propagieren) und (b) einen existierenden Monatsbericht — sonst keine Zahlen.
-- Nicht verbundene/klemmende Quellen zeigen „einrichten" (kein „Fehler"); Apps ohne Konten zeigen bei Mitglieder „–".
+- Nicht verbundene/klemmende Quellen zeigen „einrichten“ (kein „Fehler“); Apps ohne Konten zeigen bei Mitglieder „–“.
+- Vor dem Bauen nachsehen, ob es schon einen offenen Branch/PR dazu gibt — am 04.10. wurde Apple doppelt gebaut, weil die Live-Version von einem ungemergten Branch kam. Live-Stand = letzter erfolgreicher Lauf von „Cloudflare veroeffentlichen“ (Branch steht im Lauf).
 
 ---
 
@@ -62,7 +70,7 @@ Chat zeigen — auf dem Handy gibt es keinen Dateimanager.
 |---|---|
 | Signierung + Store-Upload | GitHub → Repo → Settings → Secrets and variables → Actions |
 | `FAL_KEY` | Umgebungsvariable der Claude-Umgebung (claude.ai/code → Environment) |
-| Vercel / Supabase | Vercel-Env bzw. lokale `.env` (gitignored) |
+| Store-, Google-, Supabase-Schlüssel des Dashboards | GitHub-Secrets (siehe oben); lokal `.dev.vars` (gitignored) |
 
 Ein Schlüssel, der im Chat steht, steht dauerhaft im Sitzungsprotokoll → gilt als
 verbrannt und muss ersetzt werden. Fehlt einer: sagen **welcher** und **wo er
@@ -73,6 +81,7 @@ hingehört**, statt zu raten oder einen Umweg zu bauen.
 → Bild herunterladen, ins Repo legen, committen, im Chat zeigen. Ohne gesetzten
 `FAL_KEY` ist der Weg zu: dann sagen, dass die Variable in der Umgebung fehlt.
 
-**Auslösen in diesem Repo:** Keine App-Builds. Deploy per `vercel --prod` (kein
-Git-Trigger) und nur nach Freigabe. Die Store- und Supabase-Schlüssel liegen in der
-Vercel-Env bzw. lokal in `.env.local` — niemals ins Repo, niemals in den Chat.
+**Auslösen in diesem Repo:** Keine App-Builds. Deploy nur über den Workflow
+„Cloudflare veroeffentlichen“ (kein Git-Trigger, kein `vercel --prod` mehr) und nur nach
+Freigabe. Der Workflow „Diagnose“ liest nur und braucht keine Freigabe. Schlüssel
+liegen als GitHub-Secrets — niemals ins Repo, niemals in den Chat.
