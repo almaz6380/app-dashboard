@@ -30,3 +30,12 @@ for (const n of z.playDateien ?? []) {
 for (const [p, l] of Object.entries(jePaket)) {
   console.log(`  ${p}: ` + l.slice(-3).map(([monat, d]) => `${monat} aktiv=${d?.aktiv ?? "?"} installs=${d?.installs ?? "?"} deinst=${d?.deinst ?? "?"} (geholt ${zeit(d?.geholt)})`).join(" | "));
 }
+
+// Alle Apple-IDs aus den Sales-Berichten mit Titel - zeigt "neu"-Zeilen (fehlende appleAppId in lib/apps.ts).
+const titel = {}, units = {};
+for (const b of Object.values(z.apple ?? {})) {
+  for (const [id, t] of Object.entries(b.titel ?? {})) titel[id] = t;
+  for (const [id, n] of Object.entries(b.units ?? {})) units[id] = (units[id] ?? 0) + n;
+}
+console.log(`\nApple-IDs in den Sales-Berichten:`);
+for (const id of Object.keys({ ...titel, ...units })) console.log(`  ${id}: ${titel[id] ?? "?"} (${units[id] ?? 0} Units)`);
