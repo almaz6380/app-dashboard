@@ -36,7 +36,11 @@ function absichern(res: Response): Response {
 
 const ZUSTAND = "zustand";
 const UEBERSICHT = "uebersicht";
-const DREISSIG_TAGE = 30 * 24 * 3600;
+// 400 Tage ist die Obergrenze der Browser. Bis 30.10.2026 waren es 30 Tage ohne
+// Erneuerung - dann flog man nach genau einem Monat raus, egal wie oft man reinsah.
+const COOKIE_TAGE = 400 * 24 * 3600;
+const loginCookie = (token: string, sicher: string) =>
+  `${AUTH_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_TAGE}${sicher}`;
 
 // lib/ liest process.env. Neuere Laufzeiten fuellen es selbst; doppelt schadet nicht.
 function envUebernehmen(env: Env) {
@@ -69,8 +73,10 @@ async function passwortAusAnfrage(request: Request): Promise<string> {
 async function lauf(env: Env): Promise<void> {
   const z = ((await env.DATEN.get<Zustand>(ZUSTAND, "json")) ?? leererZustand()) as Zustand;
   await einLauf(z);
+  // uebersicht() legt auch den Tages-Schnappschuss in z ab - darum vor dem Speichern.
+  const u = uebersicht(z);
   await env.DATEN.put(ZUSTAND, JSON.stringify(z));
-  await env.DATEN.put(UEBERSICHT, JSON.stringify(uebersicht(z)));
+  await env.DATEN.put(UEBERSICHT, JSON.stringify(u));
 }
 
 export default {
@@ -108,7 +114,7 @@ async function antwort(request: Request, env: Env): Promise<Response> {
       return html(loginSeite("Passwort falsch."), 401);
     }
     return weiter("/", {
-      "set-cookie": `${AUTH_COOKIE}=${await expectedToken()}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${DREISSIG_TAGE}${sicher}`,
+      "set-cookie": loginCookie(await expectedToken(), sicher),
     });
   }
 
@@ -117,7 +123,8 @@ async function antwort(request: Request, env: Env): Promise<Response> {
   }
 
   // Alles andere nur mit gueltigem Cookie - wie proxy.ts in der Next.js-Fassung.
-  if (!(await isValidToken(cookie(request, AUTH_COOKIE)))) return weiter("/login");
+  const token = cookie(request, AUTH_COOKIE);
+  if (!(await isValidToken(token))) return weiter("/login");
 
   if (url.pathname === "/api/aktualisieren" && request.method === "POST") {
     // Ein einzelner Schritt von Hand, etwa gleich nach dem Eintragen der Schluessel.
@@ -138,7 +145,10 @@ async function antwort(request: Request, env: Env): Promise<Response> {
 
   if (url.pathname === "/") {
     const u = await env.DATEN.get<Uebersicht>(UEBERSICHT, "json");
-    return html(uebersichtSeite(u));
+    // Gleitend: jeder Besuch verlaengert das Cookie wieder auf volle 400 Tage.
+    const r = html(uebersichtSeite(u));
+    r.headers.set("set-cookie", loginCookie(token!, sicher));
+    return r;
   }
 
   return new Response("Nicht gefunden.", { status: 404 });
