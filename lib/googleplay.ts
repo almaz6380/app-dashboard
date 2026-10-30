@@ -176,6 +176,23 @@ export function letzterWert(text: string, column: string): number | null {
   return null;
 }
 
+// Wert einer Spalte je Tag (Spalte "Date", JJJJ-MM-TT) - fuer den Vergleich zum
+// Vortag. Leere Zellen fehlen im Ergebnis.
+export function werteJeTag(text: string, column: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  const t = zerlege(text);
+  if (!t) return out;
+  const i = t.headers.indexOf(column), iDatum = t.headers.indexOf("Date");
+  if (i < 0 || iDatum < 0) return out;
+  for (const row of t.rows) {
+    const raw = row[i] ?? "", datum = row[iDatum] ?? "";
+    if (raw === "" || !/^\d{4}-\d{2}-\d{2}$/.test(datum)) continue;
+    const val = Number(raw);
+    if (Number.isFinite(val)) out[datum] = val;
+  }
+  return out;
+}
+
 // Die drei Zahlen einer App.
 export type AndroidZahlen = {
   installs: number | null; // Nutzer, die je installiert haben

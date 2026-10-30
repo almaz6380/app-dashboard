@@ -10,7 +10,7 @@ import { importPKCS8, SignJWT } from "jose";
 import { APPS, AppDef } from "../lib/apps";
 import { readConfig as appleConfig, readAdminConfig, makeJwt, sumReport, AppleConfig } from "../lib/appstore";
 import { leseAnfragen, fordereAn, leseBerichte, leseInstanzen, leseSegmente, ladeSegment } from "../lib/appleanalytics";
-import { sumSpalte, letzterWert, SPALTE_INSTALLS, SPALTE_DEINSTALLS, SPALTE_AKTIV } from "../lib/googleplay";
+import { sumSpalte, letzterWert, werteJeTag, SPALTE_INSTALLS, SPALTE_DEINSTALLS, SPALTE_AKTIV } from "../lib/googleplay";
 
 // Je Lauf hoechstens so viele Downloads. Eine Play-Monatsdatei hat rund 30 Zeilen,
 // ein Apple-Bericht ist gezippt; beides kostet Bruchteile einer Millisekunde, aber
@@ -29,6 +29,9 @@ const FEHLER_NOCHMAL_MS = 30 * 60 * 1000;
 
 export type Metric = { value: number | null; status: "ok" | "not-configured" | "error"; detail?: string };
 
+// Veraenderung gegenueber gestern bzw. vor 7 Tagen; null = kein Vergleichswert.
+export type Delta = { vortag: number | null; woche: number | null };
+
 export type Zeile = {
   id: string;
   name: string;
@@ -36,11 +39,19 @@ export type Zeile = {
   android: Metric;
   mitglieder: Metric;
   neu?: boolean;
+  // Fertig gerechnet, damit der Seitenaufruf nichts rechnen muss (10 ms CPU).
+  verlauf?: {
+    ios?: Delta;
+    iosDownloads?: { gestern: number | null; woche: number | null };
+    android?: Delta & { datum: string | null }; // datum = Tag des Android-Werts (Google hinkt nach)
+    mitglieder?: Delta;
+  };
 };
 
 export type Uebersicht = { zeilen: Zeile[]; stand: number | null; unvollstaendig: boolean; hinweise: string[] };
 
-type PlayDatei = { installs: number | null; deinst: number | null; aktiv: number | null; geholt: number };
+// tage: aktive Geraete je Tag (fehlt bei Dateien von vor dem 30.10.2026).
+type PlayDatei = { installs: number | null; deinst: number | null; aktiv: number | null; geholt: number; tage?: Record<string, number> };
 type AppleBericht = { units?: Record<string, number>; titel?: Record<string, string>; fehlt?: boolean; geholt: number };
 
 // Apple Analytics, nur fuer die Loeschungen. Kette: Anforderung -> Bericht
@@ -62,9 +73,15 @@ export type Zustand = {
   apple: Record<string, AppleBericht>; // Schluessel: "DAILY:2026-09-28"
   analytik?: Analytik; // fehlt in Zustaenden von vor dem 02.10.2026
   mitglieder: Record<string, Metric>;
+  // Tages-Schnappschuss je App (Wiener Datum), fuer Vergleiche ohne eigene Tagesreihe
+  // (iOS "ca.", Mitglieder). Fehlt in Zustaenden von vor dem 30.10.2026.
+  verlauf?: Record<string, Record<string, Schnappschuss>>;
   fehler: Record<string, string>;
   lauf: number;
 };
+
+// i = iOS-Wert, ia = dessen Art ("ca." oder "Downloads"), a = Android, m = Mitglieder.
+type Schnappschuss = { i?: number; ia?: string; a?: number; m?: number };
 
 export const leererZustand = (): Zustand => ({ play: {}, playDateien: [], apple: {}, analytik: leereAnalytik(), mitglieder: {}, fehler: {}, lauf: 0 });
 
@@ -136,6 +153,7 @@ async function playDatei(bucket: string, name: string, token: string): Promise<P
     installs: sumSpalte(text, SPALTE_INSTALLS),
     deinst: sumSpalte(text, SPALTE_DEINSTALLS),
     aktiv: letzterWert(text, SPALTE_AKTIV),
+    tage: werteJeTag(text, SPALTE_AKTIV),
     geholt: Date.now(),
   };
 }
@@ -174,9 +192,39 @@ export function playJePaket(z: Zustand): Map<string, { installs: number | null; 
   return out;
 }
 
+// Aktive Geraete je Tag ueber alle Monatsdateien eines Pakets; daraus der Vergleich
+// zum Vortag und zur Vorwoche - gemessen am juengsten Tag, den Google schon geliefert hat.
+export function androidVerlauf(z: Zustand, paket: string): Delta & { datum: string | null } {
+  const tage: Record<string, number> = {};
+  for (const name of z.playDateien) if (DATEINAME.exec(name)?.[1] === paket) Object.assign(tage, z.play[name]?.tage);
+  const datum = Object.keys(tage).sort().pop() ?? null;
+  if (!datum) return { vortag: null, woche: null, datum };
+  const diff = (n: number) => { const alt = tage[tagMinus(datum, n)]; return alt === undefined ? null : tage[datum] - alt; };
+  return { vortag: diff(1), woche: diff(7), datum };
+}
+
 // ---- Apple Sales --------------------------------------------------------------
 
 const pad = (n: number) => String(n).padStart(2, "0");
+const tagMinus = (datum: string, n: number) => new Date(Date.parse(datum) - n * 86400000).toISOString().slice(0, 10);
+const utcTag = (jetzt: number) => new Date(jetzt).toISOString().slice(0, 10);
+
+// Tagesberichte der letzten 7 Tage, nur fuer "Downloads gestern / 7 Tage". Sie zaehlen
+// NICHT in die Summe (die laeuft ueber appleAuftraege) - sonst zaehlten Tage am
+// Monatsanfang doppelt, wenn der Vormonat schon als Monatsbericht da ist.
+export function appleVerlaufAuftraege(jetzt: number): string[] {
+  const heute = utcTag(jetzt);
+  return [7, 6, 5, 4, 3, 2, 1].map((n) => `DAILY:${tagMinus(heute, n)}`);
+}
+
+// Erst-Downloads gestern und in den letzten 7 Tagen. null, solange ein Bericht fehlt.
+export function iosDownloads(z: Zustand, app: string, jetzt: number): { gestern: number | null; woche: number | null } {
+  const tage = appleVerlaufAuftraege(jetzt).map((k) => z.apple[k]);
+  const wert = (b: AppleBericht | undefined) => (b && !b.fehlt ? b.units?.[app] ?? 0 : null);
+  const gestern = wert(tage[6]);
+  const woche = tage.every((b) => wert(b) !== null) ? tage.reduce((s, b) => s + wert(b)!, 0) : null;
+  return { gestern, woche };
+}
 
 // Dieselbe Aufteilung wie computeAppleDownloads in lib/appstore.ts: Jahre bis
 // letztes Jahr, Monate des laufenden Jahres bis letzten Monat, Tage des laufenden
@@ -419,8 +467,13 @@ export async function einLauf(z: Zustand, jetzt = Date.now()): Promise<Zustand> 
   const apple = appleConfig();
   if (apple) {
     try {
+      // Erst die Summe vollstaendig machen, dann die Tage fuer den Verlauf.
       const auftraege = appleAuftraege(apple.startYear, jetzt, z.apple);
       const auswahl = appleAuswahl(auftraege, z.apple, jetzt);
+      if (auswahl.length < MAX_APPLE) {
+        const extra = appleAuswahl(appleVerlaufAuftraege(jetzt).filter((k) => !auftraege.includes(k)), z.apple, jetzt, MAX_APPLE - auswahl.length);
+        auswahl.push(...extra);
+      }
       if (auswahl.length) {
         const jwt = await makeJwt(apple);
         for (const k of auswahl) {
@@ -442,23 +495,58 @@ export async function einLauf(z: Zustand, jetzt = Date.now()): Promise<Zustand> 
 
 // ---- Uebersicht fuer die Seite ---------------------------------------------------
 
+// Kalendertag in Wien (JJJJ-MM-TT) - "gestern" soll sich nach der Uhr am Handy richten.
+export const wienerTag = (jetzt: number) => new Date(jetzt).toLocaleDateString("sv-SE", { timeZone: "Europe/Vienna" });
+
+const abstand = (m: Metric, alt: number | undefined): number | null =>
+  m.status === "ok" && m.value !== null && alt !== undefined ? m.value - alt : null;
+
+// Heutige Werte merken; jeder Lauf ueberschreibt, also gilt am Ende der letzte des Tages.
+// Nur 40 Tage aufheben - der Zustand liegt als ein KV-Eintrag und soll klein bleiben.
+export function merkeTag(z: Zustand, zeilen: Zeile[], heute: string): void {
+  const tag: Record<string, Schnappschuss> = {};
+  const ok = (m: Metric) => (m.status === "ok" && m.value !== null ? m.value : undefined);
+  for (const r of zeilen) {
+    if (r.neu) continue;
+    const s: Schnappschuss = { i: ok(r.ios), ia: ok(r.ios) === undefined ? undefined : r.ios.detail, a: ok(r.android), m: ok(r.mitglieder) };
+    if (s.i !== undefined || s.a !== undefined || s.m !== undefined) tag[r.id] = s;
+  }
+  const v = (z.verlauf ??= {});
+  if (Object.keys(tag).length) v[heute] = tag;
+  const grenze = tagMinus(heute, 40);
+  for (const d of Object.keys(v)) if (d < grenze) delete v[d];
+}
+
 export function uebersicht(z: Zustand, jetzt = Date.now()): Uebersicht {
   const playKonfiguriert = !!playConfig();
   const appleKonf = appleConfig();
   const jePaket = playJePaket(z);
   const zahl = (n: number | null | undefined): Metric => (n == null ? NICHT_EINGERICHTET : { value: n, status: "ok" });
 
+  const heute = wienerTag(jetzt);
+  const gestern = z.verlauf?.[tagMinus(heute, 1)], vorWoche = z.verlauf?.[tagMinus(heute, 7)];
   const zeilen: Zeile[] = APPS.map((app) => {
     const p = app.androidPackage ? jePaket.get(app.androidPackage) : undefined;
+    const ios = !app.stores.includes("ios") ? NICHT_IM_STORE
+      : appleKonf && app.appleAppId ? iosAktuell(z, app.appleAppId, appleKonf.startYear, jetzt) : NICHT_EINGERICHTET;
+    const mitglieder = app.hasMembers ? (z.mitglieder[app.id] ?? NICHT_EINGERICHTET) : KEINE_KONTEN;
+    // iOS nur mit gleicher Art vergleichen - der Wechsel von "Downloads" auf "ca." waere sonst ein Absturz.
+    const iosAlt = (s?: Record<string, Schnappschuss>) => (s?.[app.id]?.ia === ios.detail ? s?.[app.id]?.i : undefined);
     return {
       id: app.id,
       name: app.name,
-      ios: !app.stores.includes("ios") ? NICHT_IM_STORE
-        : appleKonf && app.appleAppId ? iosAktuell(z, app.appleAppId, appleKonf.startYear, jetzt) : NICHT_EINGERICHTET,
+      ios,
       android: !app.stores.includes("android") ? NICHT_IM_STORE : playKonfiguriert ? zahl(p?.aktiv) : NICHT_EINGERICHTET,
-      mitglieder: app.hasMembers ? (z.mitglieder[app.id] ?? NICHT_EINGERICHTET) : KEINE_KONTEN,
+      mitglieder,
+      verlauf: {
+        ios: { vortag: abstand(ios, iosAlt(gestern)), woche: abstand(ios, iosAlt(vorWoche)) },
+        iosDownloads: appleKonf && app.appleAppId ? iosDownloads(z, app.appleAppId, jetzt) : undefined,
+        android: app.androidPackage ? androidVerlauf(z, app.androidPackage) : undefined,
+        mitglieder: { vortag: abstand(mitglieder, gestern?.[app.id]?.m), woche: abstand(mitglieder, vorWoche?.[app.id]?.m) },
+      },
     };
   });
+  merkeTag(z, zeilen, heute);
 
   // Apps, die in einer Quelle auftauchen, aber in lib/apps.ts noch keinen Namen haben.
   const bekanntePakete = new Set(APPS.map((a) => a.androidPackage).filter(Boolean));
