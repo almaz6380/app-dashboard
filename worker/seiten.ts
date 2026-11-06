@@ -143,7 +143,7 @@ export function uebersichtSeite(u: Uebersicht | null): string {
   // iOS: "Downloads" (noch ohne Löschungen) zählt nicht als installiert.
   const ios = u.zeilen.filter((z) => imStore(z.ios));
   const iosInst = (z: Z) => (z.ios.detail === "Downloads" ? null : ok(z.ios));
-  const iosTab = tabelle("iOS", "installiert ca. = Downloads − Löschungen",
+  const iosTab = tabelle("iOS", "installiert ca. = Downloads × (1 − Löschquote)",
     ["App", "Aktuell", "Vortag", "7 Tage", "Neu", "Neu 7 T."],
     // "ca." steht schon in der Ueberschrift (≈) - spart am Handy eine Spaltenbreite.
     ios.map((z) => [name(z), z.ios.detail === "ca." ? wert({ ...z.ios, detail: undefined }) : wert(z.ios), delta(z.verlauf?.ios?.vortag), delta(z.verlauf?.ios?.woche),
@@ -186,5 +186,5 @@ ${iosTab}
 ${androidTab}
 ${mitTab}
 ${u.unvollstaendig ? `<p class="warn">Einige Store-Berichte fehlen noch oder konnten nicht geladen werden – Zahlen evtl. zu niedrig. Der Abruf alle 10 Minuten holt sie nach.${u.hinweise.length ? `<br>${u.hinweise.slice(0, 5).map(esc).join("<br>")}` : ""}</p>` : ""}
-<p class="fein" style="margin-top:16px"><b>Vortag / 7 Tage</b> = Veränderung gegenüber gestern bzw. vor einer Woche; „–“ = noch kein Vergleichswert (iOS und Mitglieder merkt sich das Dashboard erst ab 30.10.2026 täglich). <b>Android</b> = Geräte, auf denen die App jetzt liegt (Google „Active Device Installs“, hängt 2–3 Tage nach; verglichen wird mit dem Tag davor laut Google). <b>iOS</b> = Erst-Downloads minus Löschungen (ca.: Apple meldet Löschungen nur von Nutzern mit Analyse-Freigabe, die Zahl liegt eher etwas zu hoch). Solange Apple die Löschungen noch nicht liefert, steht dort die Zahl der Downloads mit „DL“; sie zählt nicht in „iOS installiert“. <b>Neu</b> = Erst-Downloads gestern bzw. in den letzten 7 Tagen. „neu“ = in der Quelle gefunden, aber noch nicht in <code>lib/apps.ts</code> benannt.</p>`, u.stand);
+<p class="fein" style="margin-top:16px"><b>Vortag / 7 Tage</b> = Veränderung gegenüber gestern bzw. vor einer Woche; „–“ = noch kein Vergleichswert (iOS und Mitglieder merkt sich das Dashboard erst ab 30.10.2026 täglich). <b>Android</b> = Geräte, auf denen die App jetzt liegt (Google „Active Device Installs“, hängt 2–3 Tage nach; verglichen wird mit dem Tag davor laut Google). <b>iOS</b> = Erst-Downloads abzüglich der Löschquote (ca.: Apple meldet Installationen und Löschungen nur von Nutzern mit Analyse-Freigabe; der Anteil gelöschter Installationen dort wird auf alle Downloads hochgerechnet). Solange Apple die Löschungen noch nicht liefert, steht dort die Zahl der Downloads mit „DL“; sie zählt nicht in „iOS installiert“. <b>Neu</b> = Erst-Downloads gestern bzw. in den letzten 7 Tagen. „neu“ = in der Quelle gefunden, aber noch nicht in <code>lib/apps.ts</code> benannt.</p>`, u.stand);
 }

@@ -63,9 +63,12 @@ export type Analytik = {
   instanzen: Record<string, { app: string; ids: string[]; geholt: number; gran?: Record<string, string> }>;
   erledigt: Record<string, number>; // Instanz -> wann ausgewertet
   loeschungen: Record<string, Record<string, number>>; // Apple-ID -> "MONTHLY:2026-09-01" -> Loeschungen
+  // Gleiche Form, Event "Install". Fehlt in Zustaenden von vor dem 06.11.2026 - dann
+  // werden alle Instanzen einmal neu gelesen.
+  installationen?: Record<string, Record<string, number>>;
 };
 
-export const leereAnalytik = (): Analytik => ({ anfragen: {}, berichte: {}, instanzen: {}, erledigt: {}, loeschungen: {} });
+export const leereAnalytik = (): Analytik => ({ anfragen: {}, berichte: {}, instanzen: {}, erledigt: {}, loeschungen: {}, installationen: {} });
 
 export type Zustand = {
   play: Record<string, PlayDatei>; // Schluessel: Dateiname im Bucket
@@ -281,6 +284,10 @@ const BERICHT_LOESCHUNGEN = /installation and deletion standard/i;
 // Loeschungen je Apple-ID und Zeitraum aus einer Segment-TSV. "Date" ist der Beginn
 // des Zeitraums (Tag, Wochen-Montag oder Monatserster), darum mit Granularitaet.
 export function loeschungenAus(tsv: string, app: string, gran = "DAILY"): Record<string, Record<string, number>> {
+  return ereignisseAus(tsv, app, gran, "delete");
+}
+
+export function ereignisseAus(tsv: string, app: string, gran: string, ereignis: "delete" | "install"): Record<string, Record<string, number>> {
   const zeilen = tsv.split(/\r?\n/).filter((l) => l.trim().length > 0);
   const out: Record<string, Record<string, number>> = {};
   if (zeilen.length < 2) return out;
@@ -290,7 +297,7 @@ export function loeschungenAus(tsv: string, app: string, gran = "DAILY"): Record
   if (iEvent < 0 || iAnzahl < 0 || iDatum < 0) throw new Error(`Apple-Loeschungen: Spalten unbekannt (${kopf.slice(0, 8).join(", ")})`);
   for (let r = 1; r < zeilen.length; r++) {
     const f = zeilen[r].split("\t");
-    if ((f[iEvent] ?? "").trim().toLowerCase() !== "delete") continue;
+    if ((f[iEvent] ?? "").trim().toLowerCase() !== ereignis) continue;
     const n = Number((f[iAnzahl] ?? "").trim().replace(/,/g, ""));
     if (!Number.isFinite(n)) continue;
     const id = (iApp >= 0 && f[iApp]?.trim()) || app;
@@ -302,9 +309,10 @@ export function loeschungenAus(tsv: string, app: string, gran = "DAILY"): Record
 
 // Laufende Anforderung und Snapshot koennen dieselben Tage liefern. Je Tag den
 // groesseren Wert behalten statt zu addieren - sonst zaehlten sie doppelt.
-export function loeschungenMerken(a: Analytik, neu: Record<string, Record<string, number>>): void {
+export function loeschungenMerken(a: Analytik, neu: Record<string, Record<string, number>>, art: "loeschungen" | "installationen" = "loeschungen"): void {
+  const speicher = (a[art] ??= {});
   for (const [id, tage] of Object.entries(neu)) {
-    const ziel = (a.loeschungen[id] ??= {});
+    const ziel = (speicher[id] ??= {});
     for (const [datum, n] of Object.entries(tage)) ziel[datum] = Math.max(ziel[datum] ?? 0, n);
   }
 }
@@ -328,6 +336,8 @@ export function offeneInstanzen(a: Analytik, app: string): string[] {
 
 async function analytikSchritt(z: Zustand, cfg: AppleConfig, jetzt: number): Promise<void> {
   const a = (z.analytik ??= leereAnalytik());
+  // Zustand von vor den Installationszahlen: alles einmal neu auswerten (~30 Instanzen).
+  if (!a.installationen) { a.installationen = {}; a.erledigt = {}; }
   let budget = MAX_ANALYTIK;
   let jwt: string | undefined;
   const token = async () => (jwt ??= await makeJwt(cfg));
@@ -400,13 +410,34 @@ async function analytikSchritt(z: Zustand, cfg: AppleConfig, jetzt: number): Pro
         if ("fehler" in daten) { z.fehler[`apple-segment ${app}`] = daten.fehler; ok = false; break; }
         const gran = Object.values(a.instanzen).find((i) => i.gran?.[instanz])?.gran?.[instanz] ?? "DAILY";
         loeschungenMerken(a, loeschungenAus(daten.tsv, app, gran));
+        loeschungenMerken(a, ereignisseAus(daten.tsv, app, gran, "install"), "installationen");
       }
       if (ok) a.erledigt[instanz] = jetzt;
     }
   }
 }
 
-// iOS-Zelle: Erst-Downloads minus Loeschungen, sobald beides vollstaendig da ist.
+// Anteil der Installationen, die wieder geloescht wurden - aus Apples Analytics.
+// Loeschungen UND Installationen dort stammen nur von Nutzern mit Analyse-Freigabe
+// (bei uns rund ein Drittel der Sales-Downloads). Die rohen Loeschungen von allen
+// Downloads abzuziehen, zieht darum viel zu wenig ab; die Quote passt aber, weil
+// beide Seiten aus derselben Teilmenge kommen. Bevorzugt aus ganzen Monaten:
+// in Tages-/Wochenberichten laesst Apple kleine Werte weg, oft gerade die Loeschungen.
+// null = Apple hat (noch) keine Installationen gemeldet.
+export function loeschQuote(loesch: Record<string, number>, inst: Record<string, number>): number | null {
+  const monate = Object.keys(inst).filter((k) => k.startsWith("MONTHLY:") && inst[k] > 0);
+  let weg: number, rein: number;
+  if (monate.length) {
+    weg = monate.reduce((s, k) => s + (loesch[k] ?? 0), 0);
+    rein = monate.reduce((s, k) => s + inst[k], 0);
+  } else {
+    weg = loeschungenSumme(loesch);
+    rein = loeschungenSumme(inst);
+  }
+  return rein > 0 ? Math.min(1, weg / rein) : null;
+}
+
+// iOS-Zelle: Erst-Downloads abzueglich der Loeschquote, sobald beides vollstaendig da ist.
 export function iosAktuell(z: Zustand, app: string, startJahr: number, jetzt: number): Metric {
   const auftraege = appleAuftraege(startJahr, jetzt, z.apple);
   if (auftraege.some((k) => !z.apple[k])) return { value: null, status: "not-configured", detail: "lädt" };
@@ -416,6 +447,8 @@ export function iosAktuell(z: Zustand, app: string, startJahr: number, jetzt: nu
   // die Erst-Downloads zeigen - klar als "Downloads" beschriftet - als gar nichts.
   const hatBericht = Object.values(a.instanzen).some((i) => i.app === app && i.ids.length > 0);
   if (!hatBericht || offeneInstanzen(a, app).length) return { value: downloads, status: "ok", detail: "Downloads" };
+  const quote = loeschQuote(a.loeschungen[app] ?? {}, a.installationen?.[app] ?? {});
+  if (quote !== null) return { value: Math.round(downloads * (1 - quote)), status: "ok", detail: "ca." };
   const weg = loeschungenSumme(a.loeschungen[app] ?? {});
   return { value: Math.max(0, downloads - weg), status: "ok", detail: "ca." };
 }
