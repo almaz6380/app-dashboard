@@ -24,7 +24,7 @@ liegen und laufen nirgends; `lib/` wird vom Worker mitbenutzt.
 
 ## Wie die Zahlen entstehen
 - **Android** = Geräte, auf denen die App jetzt liegt (Google, hängt 2–3 Tage nach).
-- **iOS** = Erst-Downloads (Sales) minus Löschungen (Analytics-Bericht „App Store Installation and Deletion Standard“), angezeigt als „ca.“. Solange Apple für eine App keine Löschungen liefert, steht dort die Download-Zahl mit dem Zusatz „Downloads“ (zählt nicht in die Kachel „Aktuell installiert“).
+- **iOS** = Erst-Downloads (Sales) × (1 − Löschquote), angezeigt als „ca.“. Die Löschquote = Löschungen ÷ Installationen aus dem Analytics-Bericht „App Store Installation and Deletion Standard“, bevorzugt aus ganzen Monaten (`loeschQuote`). Grund (06.11.2026): Apple zählt dort nur Nutzer mit Analyse-Freigabe (~⅓ der Downloads) — rohe Löschungen von allen Downloads abzuziehen, zog viel zu wenig ab (Mahjong 130 statt ~99). Solange Apple für eine App keine Löschungen liefert, steht dort die Download-Zahl mit dem Zusatz „Downloads“ (zählt nicht in die Kachel „Aktuell installiert“).
 - Kleine Apps bekommen von Apple oft **nur Wochen- und Monatsberichte**, keine Tage (Datenschutzschwelle). Der Worker liest alle Granularitäten; `loeschungenSumme` verhindert Doppelzählung (Monat vor Woche vor Tag).
 - **Vergleich Vortag / 7 Tage**: Android aus den Tageszeilen der Play-CSVs (`PlayDatei.tage`), iOS-„Neu“ aus den Apple-Tagesberichten der letzten 7 Tage, iOS-„ca.“ und Mitglieder aus dem täglichen Schnappschuss `Zustand.verlauf` (40 Tage, seit 30.10.2026).
 - **Login** hält 400 Tage und verlängert sich bei jedem Aufruf von `/` (vorher 30 Tage fest → am 30.10. ausgeloggt).
