@@ -1,7 +1,7 @@
 // Reine Logik aus worker/sammeln.ts, ohne Netz. Ausfuehren: npm run test:worker
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { playAuswahl, playJePaket, appleAuftraege, appleAuswahl, uebersicht, leererZustand, loeschungenAus, loeschungenMerken, loeschungenSumme, iosAktuell, leereAnalytik, androidVerlauf, iosDownloads, appleVerlaufAuftraege, wienerTag } from "./sammeln";
+import { playAuswahl, playJePaket, appleAuftraege, appleAuswahl, uebersicht, leererZustand, loeschungenAus, loeschungenMerken, loeschungenSumme, loeschQuote, ereignisseAus, iosAktuell, leereAnalytik, androidVerlauf, aktivTage, iosDownloads, appleVerlaufAuftraege, wienerTag } from "./sammeln";
 import { werteJeTag } from "../lib/googleplay";
 
 const datei = (paket: string, monat: string) => `stats/installs/installs_${paket}_${monat}_overview.csv`;
@@ -87,6 +87,10 @@ test("iosAktuell: Erst-Downloads minus Loeschungen, erst wenn alles geladen ist"
   const m = iosAktuell(z, app, 2026, JETZT);
   assert.equal(m.value, auftraege.length * 2 - 6);
   assert.equal(m.status, "ok");
+  // Mit Apples Installationen: Loeschquote auf alle Downloads hochrechnen.
+  z.analytik!.installationen![app] = { "MONTHLY:2026-09-01": 12 };
+  z.analytik!.loeschungen[app]["MONTHLY:2026-09-01"] = 4;
+  assert.equal(iosAktuell(z, app, 2026, JETZT).value, Math.round(auftraege.length * 2 * (2 / 3)));
   // Ein fehlender Sales-Bericht -> noch keine Zahl statt einer zu niedrigen.
   delete z.apple[auftraege[0]];
   assert.equal(iosAktuell(z, app, 2026, JETZT).detail, "lädt");
@@ -138,4 +142,33 @@ test("Tages-Schnappschuss: Vergleich zu gestern, iOS nur bei gleicher Art, 40 Ta
   assert.equal(z.verlauf["2026-09-30"].wellbooked.m, 100);
   assert.ok(!z.verlauf["2026-08-01"], "aelter als 40 Tage wird geloescht");
   assert.equal(wienerTag(Date.UTC(2026, 9, 29, 23, 30)), "2026-10-30");
+});
+
+test("loeschQuote: aus ganzen Monaten (echte Mahjong-Daten vom 06.11.: 155 Downloads)", () => {
+  const loesch = { "MONTHLY:2026-08-01": 7, "MONTHLY:2026-09-01": 5, "MONTHLY:2026-10-01": 13, "WEEKLY:2026-10-19": 4, "DAILY:2026-10-21": 1 };
+  const inst = { "MONTHLY:2026-09-01": 17, "MONTHLY:2026-10-01": 33, "WEEKLY:2026-10-19": 8, "DAILY:2026-10-21": 4 };
+  // August hat keine Installationszahl und zaehlt darum nicht mit: 18 / 50.
+  assert.equal(loeschQuote(loesch, inst), 0.36);
+  assert.equal(Math.round(155 * (1 - loeschQuote(loesch, inst)!)), 99);
+  // Ohne Monate: Wochen/Tage wie bei loeschungenSumme. Ohne Installationen: null.
+  assert.equal(loeschQuote({ "WEEKLY:2026-10-26": 3 }, { "WEEKLY:2026-10-26": 17, "DAILY:2026-10-27": 3 }), 3 / 17);
+  assert.equal(loeschQuote({ "MONTHLY:2026-10-01": 5 }, {}), null);
+  assert.deepEqual(ereignisseAus(TSV, "x", "DAILY", "install"), { "6787695557": { "DAILY:2026-09-28": 5 } });
+});
+
+test("aktivTage: unfertiger letzter Google-Tag (0 nach 59) zaehlt nicht, echte 0 schon", () => {
+  const z = leererZustand();
+  z.playDateien = [datei("at.x", "202610"), datei("at.x", "202611"), datei("at.y", "202611")];
+  z.play[datei("at.x", "202610")] = { installs: 0, deinst: 0, aktiv: 34, geholt: 1, tage: { "2026-10-31": 34 } };
+  // Echte Mahjong-Zeilen vom 20.11.: 13.11.=54, 14.11.=59, 15.11.=0 (unfertig).
+  z.play[datei("at.x", "202611")] = { installs: 0, deinst: 0, aktiv: 0, geholt: 1, tage: { "2026-11-07": 60, "2026-11-13": 54, "2026-11-14": 59, "2026-11-15": 0 } };
+  assert.equal(playJePaket(z).get("at.x")?.aktiv, 59);
+  assert.deepEqual(androidVerlauf(z, "at.x"), { vortag: 5, woche: -1, datum: "2026-11-14" });
+  // Monatsanfang: die 0 steht allein in der neuen Datei, der Vortag im alten Monat.
+  z.play[datei("at.x", "202611")] = { installs: 0, deinst: 0, aktiv: 0, geholt: 1, tage: { "2026-11-01": 0 } };
+  assert.equal(playJePaket(z).get("at.x")?.aktiv, 34);
+  // Zwei Tage 0 hintereinander: die App ist wirklich nirgends mehr installiert.
+  z.play[datei("at.y", "202611")] = { installs: 1, deinst: 1, aktiv: 0, geholt: 1, tage: { "2026-11-13": 1, "2026-11-14": 0, "2026-11-15": 0 } };
+  assert.equal(playJePaket(z).get("at.y")?.aktiv, 0);
+  assert.equal(Object.keys(aktivTage(z, "at.y")).length, 3);
 });
