@@ -23,7 +23,7 @@ liegen und laufen nirgends; `lib/` wird vom Worker mitbenutzt.
 - `lib/auth.ts` — Passwort-Login (HMAC-Cookie `dash_auth`).
 
 ## Wie die Zahlen entstehen
-- **Android** = Geräte, auf denen die App jetzt liegt (Google, hängt 2–3 Tage nach).
+- **Android** = Geräte, auf denen die App jetzt liegt (Google „Active Device Installs“; die Berichtsdatei hängt 3–8 Tage nach). Google legt den jüngsten Tag oft unfertig mit 0 aktiven Geräten ab — `aktivTage` überspringt eine 0 am letzten Tag, wenn am Tag davor Geräte da waren (20.11.2026: sonst stand überall 0). Play Console „Geräteakquisitionen“ = Neuinstallationen im Zeitraum, andere Kennzahl.
 - **iOS** = Erst-Downloads (Sales) × (1 − Löschquote), angezeigt als „ca.“. Die Löschquote = Löschungen ÷ Installationen aus dem Analytics-Bericht „App Store Installation and Deletion Standard“, bevorzugt aus ganzen Monaten (`loeschQuote`). Grund (06.11.2026): Apple zählt dort nur Nutzer mit Analyse-Freigabe (~⅓ der Downloads) — rohe Löschungen von allen Downloads abzuziehen, zog viel zu wenig ab (Mahjong 130 statt ~99). Solange Apple für eine App keine Löschungen liefert, steht dort die Download-Zahl mit dem Zusatz „Downloads“ (zählt nicht in die Kachel „Aktuell installiert“).
 - Kleine Apps bekommen von Apple oft **nur Wochen- und Monatsberichte**, keine Tage (Datenschutzschwelle). Der Worker liest alle Granularitäten; `loeschungenSumme` verhindert Doppelzählung (Monat vor Woche vor Tag).
 - **Vergleich Vortag / 7 Tage**: Android aus den Tageszeilen der Play-CSVs (`PlayDatei.tage`), iOS-„Neu“ aus den Apple-Tagesberichten der letzten 7 Tage, iOS-„ca.“ und Mitglieder aus dem täglichen Schnappschuss `Zustand.verlauf` (40 Tage, seit 30.10.2026).

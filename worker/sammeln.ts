@@ -192,14 +192,32 @@ export function playJePaket(z: Zustand): Map<string, { installs: number | null; 
     }
     out.set(paket, e);
   }
+  // Mit Tageszeilen: juengster fertiger Tag statt der letzten Zeile (siehe aktivTage).
+  for (const [paket, e] of out) {
+    const tage = aktivTage(z, paket);
+    const datum = Object.keys(tage).sort().pop();
+    if (datum) e.aktiv = tage[datum];
+  }
   return out;
+}
+
+// Aktive Geraete je Tag ueber alle Monatsdateien eines Pakets. Google legt den
+// juengsten Tag oft unfertig ab: Installationen stehen schon drin, "Active Device
+// Installs" aber noch als 0 (20.11.2026: Mahjong 59 -> 0, im Dashboard stand 0).
+// Eine 0 am letzten Tag nach einem Tag mit Geraeten gilt darum als "noch nicht da".
+// Eine echte 0 steht am Folgetag zweimal hintereinander und wird dann gezeigt.
+export function aktivTage(z: Zustand, paket: string): Record<string, number> {
+  const tage: Record<string, number> = {};
+  for (const name of z.playDateien) if (DATEINAME.exec(name)?.[1] === paket) Object.assign(tage, z.play[name]?.tage);
+  const [vorletzter, letzter] = Object.keys(tage).sort().slice(-2);
+  if (letzter && tage[letzter] === 0 && tage[vorletzter] > 0) delete tage[letzter];
+  return tage;
 }
 
 // Aktive Geraete je Tag ueber alle Monatsdateien eines Pakets; daraus der Vergleich
 // zum Vortag und zur Vorwoche - gemessen am juengsten Tag, den Google schon geliefert hat.
 export function androidVerlauf(z: Zustand, paket: string): Delta & { datum: string | null } {
-  const tage: Record<string, number> = {};
-  for (const name of z.playDateien) if (DATEINAME.exec(name)?.[1] === paket) Object.assign(tage, z.play[name]?.tage);
+  const tage = aktivTage(z, paket);
   const datum = Object.keys(tage).sort().pop() ?? null;
   if (!datum) return { vortag: null, woche: null, datum };
   const diff = (n: number) => { const alt = tage[tagMinus(datum, n)]; return alt === undefined ? null : tage[datum] - alt; };

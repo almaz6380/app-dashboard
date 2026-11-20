@@ -1,7 +1,7 @@
 // Reine Logik aus worker/sammeln.ts, ohne Netz. Ausfuehren: npm run test:worker
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { playAuswahl, playJePaket, appleAuftraege, appleAuswahl, uebersicht, leererZustand, loeschungenAus, loeschungenMerken, loeschungenSumme, loeschQuote, ereignisseAus, iosAktuell, leereAnalytik, androidVerlauf, iosDownloads, appleVerlaufAuftraege, wienerTag } from "./sammeln";
+import { playAuswahl, playJePaket, appleAuftraege, appleAuswahl, uebersicht, leererZustand, loeschungenAus, loeschungenMerken, loeschungenSumme, loeschQuote, ereignisseAus, iosAktuell, leereAnalytik, androidVerlauf, aktivTage, iosDownloads, appleVerlaufAuftraege, wienerTag } from "./sammeln";
 import { werteJeTag } from "../lib/googleplay";
 
 const datei = (paket: string, monat: string) => `stats/installs/installs_${paket}_${monat}_overview.csv`;
@@ -154,4 +154,21 @@ test("loeschQuote: aus ganzen Monaten (echte Mahjong-Daten vom 06.11.: 155 Downl
   assert.equal(loeschQuote({ "WEEKLY:2026-10-26": 3 }, { "WEEKLY:2026-10-26": 17, "DAILY:2026-10-27": 3 }), 3 / 17);
   assert.equal(loeschQuote({ "MONTHLY:2026-10-01": 5 }, {}), null);
   assert.deepEqual(ereignisseAus(TSV, "x", "DAILY", "install"), { "6787695557": { "DAILY:2026-09-28": 5 } });
+});
+
+test("aktivTage: unfertiger letzter Google-Tag (0 nach 59) zaehlt nicht, echte 0 schon", () => {
+  const z = leererZustand();
+  z.playDateien = [datei("at.x", "202610"), datei("at.x", "202611"), datei("at.y", "202611")];
+  z.play[datei("at.x", "202610")] = { installs: 0, deinst: 0, aktiv: 34, geholt: 1, tage: { "2026-10-31": 34 } };
+  // Echte Mahjong-Zeilen vom 20.11.: 13.11.=54, 14.11.=59, 15.11.=0 (unfertig).
+  z.play[datei("at.x", "202611")] = { installs: 0, deinst: 0, aktiv: 0, geholt: 1, tage: { "2026-11-07": 60, "2026-11-13": 54, "2026-11-14": 59, "2026-11-15": 0 } };
+  assert.equal(playJePaket(z).get("at.x")?.aktiv, 59);
+  assert.deepEqual(androidVerlauf(z, "at.x"), { vortag: 5, woche: -1, datum: "2026-11-14" });
+  // Monatsanfang: die 0 steht allein in der neuen Datei, der Vortag im alten Monat.
+  z.play[datei("at.x", "202611")] = { installs: 0, deinst: 0, aktiv: 0, geholt: 1, tage: { "2026-11-01": 0 } };
+  assert.equal(playJePaket(z).get("at.x")?.aktiv, 34);
+  // Zwei Tage 0 hintereinander: die App ist wirklich nirgends mehr installiert.
+  z.play[datei("at.y", "202611")] = { installs: 1, deinst: 1, aktiv: 0, geholt: 1, tage: { "2026-11-13": 1, "2026-11-14": 0, "2026-11-15": 0 } };
+  assert.equal(playJePaket(z).get("at.y")?.aktiv, 0);
+  assert.equal(Object.keys(aktivTage(z, "at.y")).length, 3);
 });
