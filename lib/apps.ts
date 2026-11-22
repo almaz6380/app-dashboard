@@ -107,4 +107,30 @@ export const APPS: AppDef[] = [
     appleAppId: "6811862606",
     androidPackage: "de.almaz.weltgeschichte",
   },
+  // Laut Diagnose vom 20.11.2026 im App-Store-Connect-Konto und mit Play-Bericht,
+  // aber noch ohne Eintrag hier -> standen nur als Android-Zeile "neu" da.
+  {
+    id: "mountainride",
+    name: "Mountain Ride",
+    hasMembers: false,
+    stores: ["ios", "android"],
+    appleAppId: "6822422299",
+    androidPackage: "com.almaz6380.mountainride",
+  },
+  {
+    id: "calcumeter",
+    name: "Calcumeter",
+    hasMembers: false,
+    stores: ["ios", "android"],
+    appleAppId: "6821628971",
+    androidPackage: "com.almaz6380.calcumeter",
+  },
+  {
+    id: "tagebuch",
+    name: "Daily Journal",
+    hasMembers: false,
+    stores: ["ios", "android"],
+    appleAppId: "6827639812",
+    androidPackage: "io.github.almaz6380.tagebuch",
+  },
 ];

@@ -43,7 +43,7 @@ Alle als **GitHub-Secrets** (Settings → Secrets and variables → Actions); de
 `GOOGLE_PLAY_BUCKET`, `WELLBOOKED_SUPABASE_*`, `MYPEAK_SUPABASE_*`.
 
 ## Zu beachten
-- **App doppelt oder mit „neu“?** Dann fehlt in `lib/apps.ts` die `appleAppId` bzw. das `androidPackage` — Diagnose zeigt die richtigen IDs. Neue App immer mit beiden IDs eintragen (Stand 06.10.2026: 9 Apps, alle in beiden Stores).
+- **App doppelt oder mit „neu“?** Dann fehlt in `lib/apps.ts` die `appleAppId` bzw. das `androidPackage` — Diagnose zeigt die richtigen IDs. Neue App immer mit beiden IDs eintragen (Stand 22.11.2026: 12 Apps, alle in beiden Stores).
 - Nicht verbundene/klemmende Quellen zeigen „einrichten“ (kein „Fehler“); Apps ohne Konten zeigen bei Mitglieder „–“.
 - Vor dem Bauen nachsehen, ob es schon einen offenen Branch/PR dazu gibt — am 04.10. wurde Apple doppelt gebaut, weil die Live-Version von einem ungemergten Branch kam. Live-Stand = letzter erfolgreicher Lauf von „Cloudflare veroeffentlichen“ (Branch steht im Lauf).
 
