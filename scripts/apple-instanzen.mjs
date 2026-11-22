@@ -72,6 +72,43 @@ for (const app of apps) {
   }
 }
 
+// Store-Status je App: ist ueberhaupt eine Version veroeffentlicht?
+console.log("\nStore-Versionen (neueste zuerst):");
+const konto = await alle("/apps?fields[apps]=name,bundleId&limit=200");
+for (const a of konto) {
+  try {
+    const v = await alle(`/apps/${a.id}/appStoreVersions?fields[appStoreVersions]=versionString,appStoreState,platform,createdDate&limit=5`);
+    console.log(`  ${a.id}  ${a.attributes?.name}: ` + (v.map((x) => `${x.attributes?.platform} ${x.attributes?.versionString} ${x.attributes?.appStoreState} (angelegt ${String(x.attributes?.createdDate).slice(0, 10)})`).join(" | ") || "keine Version"));
+  } catch (e) { console.log(`  ${a.id}  ${a.attributes?.name}: FEHLER ${e.message}`); }
+}
+
+// Sales-Tagesberichte der letzten 35 Tage: Units je App und Product Type Identifier,
+// ALLE Arten (1* = Erst-Download, 3* = erneutes Laden, 7* = Update). Das Dashboard
+// zaehlt nur 1*/F1 - hier sieht man, ob eine App nur unter anderen Arten auftaucht.
+if (env.APPSTORE_VENDOR_NUMBER) {
+  const je = {}, titel = {};
+  let berichte = 0;
+  for (let t = 1; t <= 35; t++) {
+    const datum = new Date(Date.now() - t * 86400000).toISOString().slice(0, 10);
+    const res = await fetch(`https://api.appstoreconnect.apple.com/v1/salesReports?filter[frequency]=DAILY&filter[reportType]=SALES&filter[reportSubType]=SUMMARY&filter[vendorNumber]=${encodeURIComponent(env.APPSTORE_VENDOR_NUMBER)}&filter[reportDate]=${datum}&filter[version]=1_0`,
+      { headers: { Authorization: `Bearer ${jwt}`, Accept: "application/a-gzip" } });
+    if (!res.ok) continue;
+    berichte++;
+    const z = gunzipSync(Buffer.from(await res.arrayBuffer())).toString("utf8").split("\n").filter(Boolean);
+    const k = z[0].split("\t"), iU = k.indexOf("Units"), iT = k.indexOf("Product Type Identifier"), iI = k.indexOf("Apple Identifier"), iN = k.indexOf("Title");
+    for (const r of z.slice(1)) {
+      const f = r.split("\t"), id = (f[iI] ?? "").trim(), art = (f[iT] ?? "").trim();
+      titel[id] = (f[iN] ?? "").trim();
+      ((je[id] ??= {})[art] ??= { units: 0, erster: datum, letzter: datum }).units += Number(f[iU]) || 0;
+      if (datum < je[id][art].erster) je[id][art].erster = datum;
+      if (datum > je[id][art].letzter) je[id][art].letzter = datum;
+    }
+  }
+  console.log(`\nSales je App und Art, letzte 35 Tage (${berichte} Tagesberichte):`);
+  for (const [id, arten] of Object.entries(je)) console.log(`  ${id}  ${titel[id]}: ` + Object.entries(arten).sort().map(([a, x]) => `Art ${a} = ${x.units} (${x.erster} bis ${x.letzter})`).join(", "));
+  for (const a of konto) if (!je[a.id]) console.log(`  ${a.id}  ${a.attributes?.name}: in keinem Tagesbericht`);
+} else console.log("\nAPPSTORE_VENDOR_NUMBER fehlt - Sales je Art uebersprungen");
+
 // Alle Apps im App-Store-Connect-Konto (Name, Apple-ID, Bundle-ID) - zum Abgleich mit lib/apps.ts.
 console.log("\nApps im Konto:");
 for (const a of await alle("/apps?fields[apps]=name,bundleId&limit=200")) {
