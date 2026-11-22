@@ -41,4 +41,5 @@ jobs:
           APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
           APPSTORE_ADMIN_KEY_ID: ${{ secrets.APPSTORE_ADMIN_KEY_ID }}
           APPSTORE_ADMIN_PRIVATE_KEY: ${{ secrets.APPSTORE_ADMIN_PRIVATE_KEY }}
+          APPSTORE_VENDOR_NUMBER: ${{ secrets.APPSTORE_VENDOR_NUMBER }}
         run: node scripts/apple-instanzen.mjs
